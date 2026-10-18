@@ -252,30 +252,6 @@ graph TD
     I1 --> J1[Streamlit + MoviePy Renderizado Local]
 ```
 
----
-
-## 📤 Subir este Proyecto a GitHub
-
-Sigue estos comandos para publicar este repositorio en tu cuenta de GitHub:
-
-```bash
-# 1. Asegúrate de estar en la raíz del proyecto
-cd /workspace
-
-# 2. Comprueba el estado de Git
-git status
-
-# 3. Vincula tu repositorio remoto (reemplaza con tu URL de GitHub)
-git remote add origin https://github.com/TU_USUARIO/notebooklm-youtube-studio.git
-
-# 4. Asegura la rama principal como 'main'
-git branch -M main
-
-# 5. Sube todos los cambios y commits
-git push -u origin main
-```
-
----
 
 ## 📄 Licencia
 
