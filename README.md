@@ -25,13 +25,18 @@ No hay servidor: todo se ejecuta en tu navegador con **tu propia clave de Gemini
 1. **Configurar API Key** (barra superior) → pega tu clave de [Google AI Studio](https://aistudio.google.com/apikey). Se guarda solo en este navegador (`localStorage`) y solo viaja a `generativelanguage.googleapis.com`.
 2. **1. Ingesta** → arrastra el `.html` del artículo de unfantasmaenelsistema.com. La app detecta título, subtítulo, categoría, puntos, tablas y bloques de comandos.
 3. **Generar Guion Estructurado** → Gemini escribe el diálogo entre los dos locutores, con una diapositiva por punto y diapositivas propias para cada tabla y terminal. (Sin clave también puedes usar *Generar Diapositivas 1:1 Directas*, que monta el guion solo con el artículo.)
-4. **4. Vídeo Final → Ajustes & Portada → Generar con Gemini los fondos** → el modelo de imagen de Gemini dibuja un fondo por diapositiva, con el mismo estilo y paleta en todas. Si tu clave no tiene cuota de imágenes, la app lo avisa y usa fondos vectoriales de reserva.
+4. **4. Vídeo Final → Ajustes & Portada → Fondos de las diapositivas**: un fondo por diapositiva, con el mismo estilo y paleta en todas. Eliges el origen:
+   - **Gratis (sin clave):** generador Pollinations (Flux). Su límite anónimo es de 1 imagen cada 45 s, así que 9 fondos tardan unos 7 min; la app espera sola y recorta su pequeña marca de agua. Los prompts se envían a `image.pollinations.ai`.
+   - **Manual con Gemini:** la app te da el prompt de cada diapositiva (copiar uno, copiar todos o descargar `.txt`). Lo pegas en la [app de Gemini](https://gemini.google.com/app), descargas la imagen y la subes en su diapositiva (botón *Subir* o arrastrando). Con *Subir varias*, los archivos `03.png` o `diapositiva-03.png` van a la diapositiva 3 y el resto rellena en orden los huecos libres.
+   - **Gemini API:** con tu clave; la generación de imágenes por API exige activar la facturación en Google AI Studio.
+
+   Si una imagen falla, esa diapositiva usa un fondo vectorial de reserva.
 5. **Compilar Episodio Completo** → sintetiza las voces con Gemini TTS y graba el vídeo (logo, portada, post-intro, subtítulos, música con auto-ducking y cierre) en `.mp4` (o `.webm` si tu navegador no graba MP4).
 6. **Kit SEO** → títulos, descripción con capítulos (con los tiempos reales del vídeo exportado) y etiquetas para YouTube.
 
 > **A tener en cuenta**
 > - La grabación es en **tiempo real**: un episodio de 8 minutos tarda unos 8 minutos. Mantén la pestaña visible mientras graba.
-> - Cada diapositiva gasta **1 petición de imagen** y cada turno **1 petición de voz**. Las voces se guardan en caché durante la sesión, así que al reintentar solo se piden las que faltan.
+> - Con *Gemini API*, cada diapositiva gasta **1 petición de imagen**; cada turno gasta siempre **1 petición de voz**. Las voces se guardan en caché durante la sesión, así que al reintentar solo se piden las que faltan.
 > - Las cuotas gratuitas de los modelos de voz e imagen de Gemini son pequeñas y cambian a menudo. Si un modelo no está disponible para tu clave, la app prueba otro de la lista de modelos de tu cuenta y, si no hay ninguno, te dice exactamente qué falla.
 > - Usa Chrome o Edge recientes (grabación MP4 con `MediaRecorder`).
 
@@ -243,7 +248,7 @@ graph TD
     B --> C[Gemini texto · desde el navegador]
     C --> D[Guion Estructurado: DialogueTurn JSON]
     D --> E1[Voces: Gemini TTS · PCM → WAV]
-    D --> E2[Fondos: modelo de imagen de Gemini · SVG de reserva]
+    D --> E2[Fondos: gratis · manual con Gemini · Gemini API · SVG de reserva]
     D --> E3[Subtitle Generator: SRT & Timestamps]
     E1 --> F1[Video Canvas Renderer: 16:9 & 9:16]
     E2 --> F1

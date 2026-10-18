@@ -150,6 +150,8 @@ export async function generateContent(
   }
 
   let lastError: GeminiError | null = null;
+  const zeroQuotaModels: string[] = [];
+  const kindLabel = kind === 'image' ? 'imágenes' : kind === 'tts' ? 'voz' : 'texto';
 
   for (const model of candidates) {
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -177,10 +179,7 @@ export async function generateContent(
 
       if (res.status === 429) {
         if (isZeroQuota(errJson)) {
-          lastError = new GeminiError(
-            `Tu clave no tiene cuota para el modelo ${model} (${kind === 'image' ? 'imágenes' : kind === 'tts' ? 'voz' : 'texto'}). Puede que ese modelo requiera facturación activada en Google AI Studio.`,
-            429
-          );
+          zeroQuotaModels.push(model);
           break; // probar el siguiente modelo
         }
         if (attempt < 3) {
@@ -207,6 +206,15 @@ export async function generateContent(
     }
   }
 
+  if (zeroQuotaModels.length > 0 && (!lastError || zeroQuotaModels.length >= candidates.length - 1)) {
+    throw new GeminiError(
+      `Tu clave no tiene cuota gratuita para ningún modelo de ${kindLabel} de Gemini (probados: ${zeroQuotaModels.join(', ')}). ` +
+        (kind === 'image'
+          ? 'La generación de imágenes por API exige activar la facturación en Google AI Studio.'
+          : 'Puede que ese modelo requiera activar la facturación en Google AI Studio.'),
+      429
+    );
+  }
   throw lastError || new GeminiError('No se pudo completar la petición a Gemini.');
 }
 

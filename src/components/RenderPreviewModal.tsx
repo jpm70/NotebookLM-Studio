@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { DialogueTurn, HostConfig, PodcastScript, StudioSettings } from '../types';
 import { sfxEngine } from '../services/sfxEngine';
-import { generateSlideBackground } from '../services/imageService';
+import { buildManualPrompt, generateBackgroundFromSource, getStoredBackgroundSource } from '../services/imageService';
 import { DEFAULT_LOGO_BASE64 } from '../assets/logoData';
 
 interface RenderPreviewModalProps {
@@ -133,22 +133,32 @@ export const RenderPreviewModal: React.FC<RenderPreviewModalProps> = ({
     }
   };
 
-  // Generar imagen con IA para este turno
+  // Generar el fondo de este turno con el origen elegido en el estudio (o copiar su prompt en modo manual)
   const handleGenerateImage = async () => {
-    if (!currentTurn.visual_prompt) return;
+    const source = getStoredBackgroundSource();
+    const style = settings?.branding?.visualStyle || 'anime';
+    const aspectRatio = settings?.aspectRatio || '16:9';
+    if (source === 'manual') {
+      const prompt = buildManualPrompt(currentTurn, style, 'shinkai', aspectRatio, script.episode_title);
+      try {
+        await navigator.clipboard.writeText(prompt);
+        alert('Prompt copiado. Pégalo en Gemini y sube aquí la imagen con el botón de subir.');
+      } catch {
+        window.prompt('Copia este prompt y pégalo en Gemini:', prompt);
+      }
+      return;
+    }
     try {
       setIsGenerating(true);
-      const result = await generateSlideBackground(currentTurn, {
-        style: settings?.branding?.visualStyle || 'anime',
-        aspectRatio: settings?.aspectRatio || '16:9',
+      const result = await generateBackgroundFromSource(source, currentTurn, {
+        style,
+        aspectRatio,
         episodeTitle: script.episode_title,
         index: currentTurnIndex,
       });
       saveTurnImage(result.imageUrl);
-      if (result.source !== 'gemini') {
-        alert(`Gemini no pudo generar la imagen; se usa un fondo vectorial de reserva.
-
-Motivo: ${result.error}`);
+      if (result.source === 'svg-fallback') {
+        alert(`No se pudo generar la imagen; se usa un fondo vectorial de reserva.\n\nMotivo: ${result.error}`);
       }
     } catch (e: any) {
       console.error('Error generando ilustración del turno:', e);
