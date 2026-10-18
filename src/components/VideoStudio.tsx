@@ -51,7 +51,16 @@ import {
 import { sfxEngine } from '../services/sfxEngine';
 import { generateSubtitlesFromScript, triggerSrtDownload, buildSrtContent } from '../services/subtitleService';
 import { bgmService, BgmTrackType } from '../services/audioBgmService';
-import { generateSlideBackground, buildFallbackSvg } from '../services/imageService';
+import {
+  buildFallbackSvg,
+  generateBackgroundFromSource,
+  getStoredBackgroundSource,
+  storeBackgroundSource,
+  fileToSlideImage,
+  BackgroundSource,
+  FREE_SECONDS_PER_IMAGE,
+} from '../services/imageService';
+import { ManualBackgroundsPanel } from './ManualBackgroundsPanel';
 import { getSharedAudioContext } from '../services/sharedAudio';
 import { YouTubeMetadataModal } from './YouTubeMetadataModal';
 import { ShortsClipModal } from './ShortsClipModal';
@@ -113,6 +122,12 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
   const [selectedAnimeMood, setSelectedAnimeMood] = useState<'shinkai' | 'cyberpunk' | 'ghibli'>('shinkai');
   const [batchAnimeProgressText, setBatchAnimeProgressText] = useState<string | null>(null);
   const batchCancelRef = useRef(false);
+  const [bgSource, setBgSource] = useState<BackgroundSource>(getStoredBackgroundSource);
+  const chooseBgSource = (source: BackgroundSource) => {
+    setBgSource(source);
+    storeBackgroundSource(source);
+    setBatchAnimeProgressText(null);
+  };
 
   // Modales
   const [isYouTubeModalOpen, setIsYouTubeModalOpen] = useState(false);
@@ -401,23 +416,19 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
   };
 
   // Manejar subida de imagen para el turno actual
-  const handleTurnImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleTurnImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    setTurnBackground(currentTurnIndex, await fileToSlideImage(file, settings.aspectRatio));
+  };
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (dataUrl) {
-        updateBranding({
-          turnBackgroundImages: {
-            ...(branding.turnBackgroundImages || {}),
-            [currentTurnIndex]: dataUrl,
-          },
-        });
-      }
-    };
-    reader.readAsDataURL(file);
+  const removeTurnBackground = (turnIdx: number) => {
+    setSettings((prev) => {
+      const copy = { ...(prev.branding.turnBackgroundImages || {}) };
+      delete copy[turnIdx];
+      return { ...prev, branding: { ...prev.branding, turnBackgroundImages: copy } };
+    });
   };
 
   // Guarda el fondo de un turno usando el estado más reciente (evita perder fondos en lote)
@@ -431,26 +442,30 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     }));
   };
 
-  // Generar con Gemini el fondo ilustrado de un turno
+  const sourceName = bgSource === 'gemini' ? 'Gemini' : 'el generador gratuito';
+
+  // Generar el fondo ilustrado de un turno con el origen elegido (Gemini API o gratuito)
   const handleGenerateTurnImage = async (turnIdx: number) => {
     const turn = script.turns[turnIdx];
-    if (!turn) return;
+    if (!turn || bgSource === 'manual') return;
 
     try {
       setGeneratingTurnIdx(turnIdx);
-      setBatchAnimeProgressText(`Generando con Gemini el fondo de la diapositiva ${turnIdx + 1}...`);
-      const result = await generateSlideBackground(turn, {
+      setBatchAnimeProgressText(`Generando con ${sourceName} el fondo de la diapositiva ${turnIdx + 1}...`);
+      const result = await generateBackgroundFromSource(bgSource, turn, {
         style: branding.visualStyle || 'anime',
         mood: selectedAnimeMood,
         aspectRatio: settings.aspectRatio,
         episodeTitle: script.episode_title,
         index: turnIdx,
+        onWait: (secs) =>
+          setBatchAnimeProgressText(`Límite gratuito: la diapositiva ${turnIdx + 1} se pide en ${secs} s...`),
       });
       setTurnBackground(turnIdx, result.imageUrl);
       setBatchAnimeProgressText(
-        result.source === 'gemini'
-          ? `✓ Fondo de la diapositiva ${turnIdx + 1} generado con ${result.model}.`
-          : `⚠ Gemini no pudo generar la imagen; se usa un fondo vectorial de reserva. Motivo: ${result.error}`
+        result.source === 'svg-fallback'
+          ? `⚠ No se pudo generar la imagen; se usa un fondo vectorial de reserva. Motivo: ${result.error}`
+          : `✓ Fondo de la diapositiva ${turnIdx + 1} generado con ${result.model}.`
       );
     } catch (e: any) {
       console.error('Error generando fondo ilustrado:', e);
@@ -477,21 +492,28 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     await handleBatchGenerateAnimeBackgrounds(selectedAnimeMood);
   };
 
-  // Generación en lote con Gemini: mismo estilo y paleta en todas las diapositivas.
-  // Si la primera imagen falla por cuota o modelo no disponible, el resto usa SVG sin seguir gastando peticiones.
+  // Generación en lote: mismo estilo y paleta en todas las diapositivas.
+  // Con Gemini, si la primera imagen falla por cuota o modelo, el resto usa SVG sin seguir gastando peticiones.
   const handleBatchGenerateAnimeBackgrounds = async (mood: 'shinkai' | 'cyberpunk' | 'ghibli' = selectedAnimeMood) => {
+    if (bgSource === 'manual') return;
     const total = script.turns.length;
     batchCancelRef.current = false;
+    const cancel = {
+      get cancelled() {
+        return batchCancelRef.current;
+      },
+    };
     setIsGeneratingTurnImages(true);
     let generated = 0;
     let fallbacks = 0;
+    let lastError = '';
     let geminiUnavailable: string | null = null;
 
     try {
       for (let i = 0; i < total; i++) {
         if (batchCancelRef.current) break;
         const turn = script.turns[i];
-        setBatchAnimeProgressText(`Generando con Gemini el fondo ${i + 1} de ${total}...`);
+        setBatchAnimeProgressText(`Generando con ${sourceName} el fondo ${i + 1} de ${total}...`);
 
         if (geminiUnavailable) {
           setTurnBackground(
@@ -502,20 +524,30 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
           continue;
         }
 
-        const result = await generateSlideBackground(turn, {
+        const result = await generateBackgroundFromSource(bgSource, turn, {
           style: branding.visualStyle || 'anime',
           mood,
           aspectRatio: settings.aspectRatio,
           episodeTitle: script.episode_title,
           index: i,
+          cancel,
+          onWait: (secs) =>
+            setBatchAnimeProgressText(
+              `Fondo ${i + 1} de ${total}: el generador gratuito admite 1 imagen cada ${FREE_SECONDS_PER_IMAGE} s, siguiente en ${secs} s...`
+            ),
         });
+        if (batchCancelRef.current) break;
         setTurnBackground(i, result.imageUrl);
-        if (result.source === 'gemini') {
+        if (result.source !== 'svg-fallback') {
           generated++;
         } else {
           fallbacks++;
-          if (generated === 0 && result.error && /cuota|no tiene ningún modelo|facturación|no es válida|rechazado/i.test(result.error)) {
-            geminiUnavailable = result.error;
+          lastError = result.error || '';
+          const geminiBlocked =
+            bgSource === 'gemini' && /cuota|no tiene ningún modelo|facturación|no es válida|rechazado/i.test(lastError);
+          const freeBlocked = bgSource === 'free' && /HTTP 403|sigue limitando/i.test(lastError);
+          if ((geminiBlocked && generated === 0) || freeBlocked) {
+            geminiUnavailable = lastError;
           }
         }
       }
@@ -523,10 +555,12 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
       const cancelled = batchCancelRef.current ? ' (detenido)' : '';
       setBatchAnimeProgressText(
         geminiUnavailable
-          ? `⚠ Gemini no puede generar imágenes con esta clave: ${geminiUnavailable} Se han usado ${fallbacks} fondos vectoriales de reserva.`
+          ? bgSource === 'gemini'
+            ? `⚠ Gemini no puede generar imágenes con esta clave: ${geminiUnavailable} Se han usado ${fallbacks} fondos vectoriales de reserva. Prueba el generador gratuito o el modo manual.`
+            : `⚠ ${geminiUnavailable} Se han generado ${generated} fondos y ${fallbacks} son vectoriales de reserva.`
           : fallbacks > 0
-          ? `✓ ${generated} fondos generados con Gemini y ${fallbacks} de reserva (alguna petición falló)${cancelled}.`
-          : `✓ ¡Lote completado! ${generated} fondos generados con Gemini${cancelled}.`
+          ? `⚠ ${generated} fondos generados y ${fallbacks} de reserva${cancelled}. Último error: ${lastError}`
+          : `✓ ¡Lote completado! ${generated} fondos generados con ${sourceName}${cancelled}.`
       );
     } catch (e: any) {
       console.error('Error generando lote de fondos:', e);
@@ -1371,21 +1405,68 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
               <div>
                 <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
                   <Palette className="w-4 h-4 text-purple-400" />
-                  <span>Generación en Lote: Fondos Anime</span>
+                  <span>Fondos de las diapositivas</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] bg-purple-500/20 text-purple-300 font-mono font-bold border border-purple-500/30">
                     Estética Consistente
                   </span>
                 </h4>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Gemini dibuja un fondo por diapositiva con el mismo estilo y paleta, a partir del prompt visual de cada turno ({script.turns.length} peticiones de imagen a tu clave).
+                  Un fondo por diapositiva con el mismo estilo y paleta, a partir del prompt visual de cada turno.
                 </p>
               </div>
+            </div>
+
+            {/* Origen de los fondos */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-200 block">Origen de las imágenes:</label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                {(
+                  [
+                    {
+                      id: 'free',
+                      name: 'Gratis (sin clave)',
+                      desc: `Generador Pollinations. 1 imagen cada ${FREE_SECONDS_PER_IMAGE} s: ~${Math.ceil((script.turns.length * FREE_SECONDS_PER_IMAGE) / 60)} min para ${script.turns.length} fondos.`,
+                    },
+                    {
+                      id: 'manual',
+                      name: 'Manual con Gemini',
+                      desc: 'Copias cada prompt a la app de Gemini y subes aquí las imágenes.',
+                    },
+                    {
+                      id: 'gemini',
+                      name: 'Gemini API',
+                      desc: 'Con tu clave. Por API exige facturación activada.',
+                    },
+                  ] as { id: BackgroundSource; name: string; desc: string }[]
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => chooseBgSource(opt.id)}
+                    disabled={isGeneratingTurnImages}
+                    className={`p-2.5 rounded-xl border text-left transition-all disabled:opacity-50 ${
+                      bgSource === opt.id
+                        ? 'bg-purple-500/20 border-purple-500 text-white shadow-md ring-1 ring-purple-500/40'
+                        : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <div className="font-bold text-xs text-white mb-0.5">{opt.name}</div>
+                    <p className="text-[10px] text-slate-400 leading-tight">{opt.desc}</p>
+                  </button>
+                ))}
+              </div>
+              {bgSource === 'free' && (
+                <p className="text-[10px] text-slate-500 leading-snug">
+                  Los prompts de imagen se envían a image.pollinations.ai, un servicio externo gratuito sin garantía de
+                  disponibilidad. Su pequeña marca de agua se recorta automáticamente.
+                </p>
+              )}
             </div>
 
             {/* Selector de Atmósfera / Paleta Anime Consistente */}
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-200 block">
-                Atmósfera Estética Anime del Lote:
+                Atmósfera de los fondos:
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                 {[
@@ -1474,6 +1555,19 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
               </div>
             )}
 
+            {bgSource === 'manual' ? (
+              <ManualBackgroundsPanel
+                turns={script.turns}
+                episodeTitle={script.episode_title}
+                style={branding.visualStyle || 'anime'}
+                mood={selectedAnimeMood}
+                aspectRatio={settings.aspectRatio}
+                backgrounds={branding.turnBackgroundImages || {}}
+                onSetBackground={setTurnBackground}
+                onRemoveBackground={removeTurnBackground}
+              />
+            ) : (
+              <>
             {/* Botón Principal de Generación en Lote */}
             <div className="flex gap-2">
               <button
@@ -1485,12 +1579,14 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                 {isGeneratingTurnImages ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Generando fondos con Gemini...</span>
+                    <span>Generando fondos con {sourceName}...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 fill-current" />
-                    <span>Generar con Gemini los fondos de las {script.turns.length} diapositivas</span>
+                    <span>
+                      Generar {bgSource === 'gemini' ? 'con Gemini' : 'gratis'} los fondos de las {script.turns.length} diapositivas
+                    </span>
                   </>
                 )}
               </button>
@@ -1537,16 +1633,14 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                 </span>
                 <button
                   type="button"
-                  onClick={() => {
-                    const copy = { ...(branding.turnBackgroundImages || {}) };
-                    delete copy[currentTurnIndex];
-                    updateBranding({ turnBackgroundImages: copy });
-                  }}
+                  onClick={() => removeTurnBackground(currentTurnIndex)}
                   className="text-rose-400 hover:underline text-[10px]"
                 >
                   Quitar
                 </button>
               </div>
+            )}
+              </>
             )}
           </div>
 
