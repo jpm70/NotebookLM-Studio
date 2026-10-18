@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { DialogueTurn, HostConfig, PodcastScript, StudioSettings } from '../types';
 import { sfxEngine } from '../services/sfxEngine';
-import { getStoredApiKey } from '../services/apiKeyStorage';
+import { generateSlideBackground } from '../services/imageService';
 import { DEFAULT_LOGO_BASE64 } from '../assets/logoData';
 
 interface RenderPreviewModalProps {
@@ -138,25 +138,21 @@ export const RenderPreviewModal: React.FC<RenderPreviewModalProps> = ({
     if (!currentTurn.visual_prompt) return;
     try {
       setIsGenerating(true);
-      const apiKey = getStoredApiKey() || undefined;
-      const res = await fetch('/api/generate-turn-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          visualPrompt: currentTurn.visual_prompt,
-          visualTitle: currentTurn.visual_title || `Turno ${currentTurnIndex + 1}`,
-          clientApiKey: apiKey,
-        }),
+      const result = await generateSlideBackground(currentTurn, {
+        style: settings?.branding?.visualStyle || 'anime',
+        aspectRatio: settings?.aspectRatio || '16:9',
+        episodeTitle: script.episode_title,
+        index: currentTurnIndex,
       });
+      saveTurnImage(result.imageUrl);
+      if (result.source !== 'gemini') {
+        alert(`Gemini no pudo generar la imagen; se usa un fondo vectorial de reserva.
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.imageUrl) {
-          saveTurnImage(data.imageUrl);
-        }
+Motivo: ${result.error}`);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Error generando ilustración del turno:', e);
+      alert(e?.message || 'Error generando la ilustración.');
     } finally {
       setIsGenerating(false);
     }

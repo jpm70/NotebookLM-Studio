@@ -4,6 +4,7 @@
  * con latencia cero, sin depender de descargas externas ni sufrir errores CORS.
  */
 
+import { getSharedAudioContext } from './sharedAudio';
 import { SfxCategory, SoundEffectItem } from '../types';
 
 export const SFX_CATALOG: SoundEffectItem[] = [
@@ -236,17 +237,26 @@ export const SFX_CATALOG: SoundEffectItem[] = [
 
 class SfxSynthesizer {
   private ctx: AudioContext | null = null;
+  private output: GainNode | null = null;
   private activeNodes: { stop: () => void }[] = [];
 
   private getContext(): AudioContext {
-    if (!this.ctx || this.ctx.state === 'closed') {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      this.ctx = new AudioCtx();
+    const ctx = getSharedAudioContext();
+    if (this.ctx !== ctx) {
+      this.ctx = ctx;
+      this.output = null;
     }
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+    return ctx;
+  }
+
+  /** Bus de salida de todos los efectos: va a los altavoces y, al exportar, también al vídeo. */
+  public getOutput(): GainNode {
+    const ctx = this.getContext();
+    if (!this.output) {
+      this.output = ctx.createGain();
+      this.output.connect(ctx.destination);
     }
-    return this.ctx;
+    return this.output;
   }
 
   /**
@@ -316,7 +326,7 @@ class SfxSynthesizer {
 
           noise.connect(filter);
           filter.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           noise.start(now);
           noise.stop(now + dur);
@@ -362,11 +372,11 @@ class SfxSynthesizer {
           noiseGain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
           osc.connect(oscGain);
-          oscGain.connect(ctx.destination);
+          oscGain.connect(this.getOutput());
 
           noise.connect(filter);
           filter.connect(noiseGain);
-          noiseGain.connect(ctx.destination);
+          noiseGain.connect(this.getOutput());
 
           osc.start(now);
           noise.start(now);
@@ -403,7 +413,7 @@ class SfxSynthesizer {
             gain.gain.exponentialRampToValueAtTime(0.0005, startT + 0.9);
 
             osc.connect(gain);
-            gain.connect(ctx.destination);
+            gain.connect(this.getOutput());
 
             osc.start(startT);
             osc.stop(startT + 0.9);
@@ -439,7 +449,7 @@ class SfxSynthesizer {
 
           osc.connect(filter);
           filter.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           osc.start(now);
           osc.stop(now + dur);
@@ -471,7 +481,7 @@ class SfxSynthesizer {
           gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
           osc.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           osc.start(now);
           osc.stop(now + dur);
@@ -508,7 +518,7 @@ class SfxSynthesizer {
 
           noise.connect(filter);
           filter.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           noise.start(now);
           noise.stop(now + dur);
@@ -547,7 +557,7 @@ class SfxSynthesizer {
 
           osc.connect(filter);
           filter.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           osc.start(now);
           osc.stop(now + dur);
@@ -580,7 +590,7 @@ class SfxSynthesizer {
 
           osc1.connect(gain);
           osc2.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           osc1.start(now);
           osc2.start(now);
@@ -613,7 +623,7 @@ class SfxSynthesizer {
           gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
           osc.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           osc.start(now);
           osc.stop(now + dur);
@@ -643,7 +653,7 @@ class SfxSynthesizer {
           gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
           osc.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           osc.start(now);
           osc.stop(now + dur);
@@ -680,9 +690,9 @@ class SfxSynthesizer {
           g2.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
 
           osc1.connect(g1);
-          g1.connect(ctx.destination);
+          g1.connect(this.getOutput());
           osc2.connect(g2);
-          g2.connect(ctx.destination);
+          g2.connect(this.getOutput());
 
           osc1.start(now);
           osc1.stop(now + 0.05);
@@ -720,7 +730,7 @@ class SfxSynthesizer {
             gain.gain.exponentialRampToValueAtTime(0.001, now + n.t + n.d);
 
             osc.connect(gain);
-            gain.connect(ctx.destination);
+            gain.connect(this.getOutput());
 
             osc.start(now + n.t);
             osc.stop(now + n.t + n.d);
@@ -752,7 +762,7 @@ class SfxSynthesizer {
 
           osc1.connect(gain);
           osc2.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           osc1.start(now);
           osc2.start(now);
@@ -795,11 +805,11 @@ class SfxSynthesizer {
           gNoise.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
 
           osc.connect(gOsc);
-          gOsc.connect(ctx.destination);
+          gOsc.connect(this.getOutput());
 
           noise.connect(filter);
           filter.connect(gNoise);
-          gNoise.connect(ctx.destination);
+          gNoise.connect(this.getOutput());
 
           osc.start(now);
           noise.start(now);
@@ -831,7 +841,7 @@ class SfxSynthesizer {
             gain.gain.exponentialRampToValueAtTime(0.001, now + timeOffset + 0.25);
 
             osc.connect(gain);
-            gain.connect(ctx.destination);
+            gain.connect(this.getOutput());
 
             osc.start(now + timeOffset);
             osc.stop(now + timeOffset + 0.25);
@@ -869,7 +879,7 @@ class SfxSynthesizer {
 
           noise.connect(filter);
           filter.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           noise.start(now);
           noise.stop(now + dur);
@@ -906,7 +916,7 @@ class SfxSynthesizer {
 
           noise.connect(filter);
           filter.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           noise.start(now);
           noise.stop(now + dur);
@@ -941,7 +951,7 @@ class SfxSynthesizer {
 
           noise.connect(filter);
           filter.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           // Añadir teclas sutiles
           const keystrokes = [0.4, 0.7, 1.2, 1.8, 2.5, 3.1];
@@ -954,7 +964,7 @@ class SfxSynthesizer {
               gKey.gain.setValueAtTime(safeVolume * 0.15, now + tOffset);
               gKey.gain.exponentialRampToValueAtTime(0.001, now + tOffset + 0.05);
               osc.connect(gKey);
-              gKey.connect(ctx.destination);
+              gKey.connect(this.getOutput());
               osc.start(now + tOffset);
               osc.stop(now + tOffset + 0.06);
             }
@@ -996,7 +1006,7 @@ class SfxSynthesizer {
 
           osc.connect(filter);
           filter.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           osc.start(now);
           osc.stop(now + dur);
@@ -1033,7 +1043,7 @@ class SfxSynthesizer {
 
           noise.connect(filter);
           filter.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(this.getOutput());
 
           noise.start(now);
           noise.stop(now + dur);
@@ -1059,7 +1069,7 @@ class SfxSynthesizer {
     const now = ctx.currentTime;
     const master = ctx.createGain();
     master.gain.setValueAtTime(volume * 0.45, now);
-    master.connect(ctx.destination);
+    master.connect(this.getOutput());
 
     if (reactionType === 'chuckle') {
       [220, 240, 210].forEach((freq, i) => {

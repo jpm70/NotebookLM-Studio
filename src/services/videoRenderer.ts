@@ -68,18 +68,25 @@ export class VideoRenderer {
     }
   }
 
-  public preloadTurnBackgrounds(backgrounds?: Record<number, string>) {
-    if (!backgrounds) return;
-    Object.entries(backgrounds).forEach(([, url]) => {
-      if (!this.cachedBackgroundImgs.has(url)) {
-        const img = new Image();
+  /** Precarga los fondos y resuelve cuando todos están decodificados (o tras 15 s como máximo). */
+  public preloadTurnBackgrounds(backgrounds?: Record<number, string>): Promise<void> {
+    if (!backgrounds) return Promise.resolve();
+    const pending: Promise<unknown>[] = [];
+    Object.values(backgrounds).forEach((url) => {
+      if (!url) return;
+      let img = this.cachedBackgroundImgs.get(url);
+      if (!img) {
+        img = new Image();
         img.crossOrigin = 'anonymous';
         img.src = url;
-        img.onload = () => {
-          this.cachedBackgroundImgs.set(url, img);
-        };
+        this.cachedBackgroundImgs.set(url, img);
+      }
+      if (!img.complete || img.naturalWidth === 0) {
+        pending.push(img.decode().catch(() => undefined));
       }
     });
+    const timeout = new Promise((resolve) => setTimeout(resolve, 15000));
+    return Promise.race([Promise.all(pending), timeout]).then(() => undefined);
   }
 
   public resize(aspectRatio: '16:9' | '9:16', resolution: '720p' | '1080p' = '720p') {
@@ -158,12 +165,18 @@ export class VideoRenderer {
       const offsetY = (h - drawH) / 2;
       ctx.drawImage(bgImg, offsetX, offsetY, drawW, drawH);
 
-      // Viñeta oscura cinemática para garantizar contraste absoluto del texto
+      // Viñeta suave: la ilustración se ve, y las tarjetas de texto ya llevan su propio panel opaco
       const vignette = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.25, w / 2, h / 2, Math.max(w, h) * 0.75);
-      vignette.addColorStop(0, 'rgba(2, 6, 23, 0.68)');
-      vignette.addColorStop(1, 'rgba(2, 6, 23, 0.94)');
+      vignette.addColorStop(0, 'rgba(2, 6, 23, 0.32)');
+      vignette.addColorStop(1, 'rgba(2, 6, 23, 0.78)');
       ctx.fillStyle = vignette;
       ctx.fillRect(0, 0, w, h);
+      // Franja superior más oscura para que el título se lea sobre cualquier imagen
+      const topBand = ctx.createLinearGradient(0, 0, 0, h * 0.28);
+      topBand.addColorStop(0, 'rgba(2, 6, 23, 0.7)');
+      topBand.addColorStop(1, 'rgba(2, 6, 23, 0)');
+      ctx.fillStyle = topBand;
+      ctx.fillRect(0, 0, w, h * 0.28);
       ctx.restore();
     } else {
       // Fondos según el Estilo Visual del Vídeo

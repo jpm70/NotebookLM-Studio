@@ -14,7 +14,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { HostConfig, PodcastScript, VideoBrandingSettings } from '../types';
-import { getStoredApiKey } from '../services/apiKeyStorage';
+import { generateYoutubeSeo } from '../services/geminiService';
 
 interface YouTubeMetadataModalProps {
   isOpen: boolean;
@@ -23,6 +23,8 @@ interface YouTubeMetadataModalProps {
   hostA: HostConfig;
   hostB: HostConfig;
   branding: VideoBrandingSettings;
+  /** Inicio real (s) de cada turno y del cierre, medido en la última exportación completa */
+  timeline?: { turnStartTimes: number[]; outroStart: number } | null;
 }
 
 export const YouTubeMetadataModal: React.FC<YouTubeMetadataModalProps> = ({
@@ -32,6 +34,7 @@ export const YouTubeMetadataModal: React.FC<YouTubeMetadataModalProps> = ({
   hostA,
   hostB,
   branding,
+  timeline,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [titles, setTitles] = useState<string[]>([]);
@@ -46,31 +49,35 @@ export const YouTubeMetadataModal: React.FC<YouTubeMetadataModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
-    // Generar marcas de tiempo inmediatas basadas en los turnos
-    let currentSeconds = branding.includeIntro ? (branding.introDuration || 3) : 0;
+    // Marcas de tiempo: exactas si ya se exportó el episodio completo, estimadas si no
+    const fmt = (sec: number) => {
+      const total = Math.max(0, Math.floor(sec));
+      return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    };
+    const exact = timeline && timeline.turnStartTimes.length === (script.turns || []).length ? timeline : null;
+    let estimated =
+      (branding.includeIntro ? branding.introDuration || 3.5 : 0) +
+      (branding.includePostIntro !== false ? branding.postIntroDuration || 3.5 : 0);
     const computedChapters: { timestamp: string; title: string; speaker: string }[] = [
-      { timestamp: '00:00', title: 'Introducción y Apertura', speaker: hostA.name },
+      { timestamp: '00:00', title: 'Introducción', speaker: hostA.name },
     ];
 
     (script.turns || []).forEach((t, i) => {
-      const mins = Math.floor(currentSeconds / 60);
-      const secs = currentSeconds % 60;
-      const timeStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-      computedChapters.push({
-        timestamp: timeStr,
-        title: t.visual_title || `Turno ${i + 1}: ${t.speaker === 'Host_A' ? hostA.name : hostB.name}`,
-        speaker: t.speaker === 'Host_A' ? hostA.name : hostB.name,
-      });
-      const approxDuration = Math.max(6, Math.ceil(t.text.length / 17));
-      currentSeconds += approxDuration + 1;
+      const start = exact ? exact.turnStartTimes[i] : estimated;
+      const speaker = t.speaker === 'Host_A' ? hostA.name : hostB.name;
+      const title = t.sectionTitle || t.visual_title || `Turno ${i + 1}`;
+      // YouTube solo admite capítulos de 10 s o más: se agrupan los turnos de la misma sección
+      const prev = computedChapters[computedChapters.length - 1];
+      if (prev.title !== title) {
+        computedChapters.push({ timestamp: fmt(start), title, speaker });
+      }
+      estimated += Math.max(6, Math.ceil(t.text.length / 15)) + 0.3;
     });
 
     if (branding.includeOutro) {
-      const mins = Math.floor(currentSeconds / 60);
-      const secs = currentSeconds % 60;
       computedChapters.push({
-        timestamp: `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`,
-        title: 'Conclusiones y Cierre',
+        timestamp: fmt(exact ? exact.outroStart : estimated),
+        title: 'Conclusiones y cierre',
         speaker: 'Ambos',
       });
     }
@@ -114,41 +121,27 @@ export const YouTubeMetadataModal: React.FC<YouTubeMetadataModalProps> = ({
 
     // Redibujar la miniatura en el canvas
     setTimeout(drawThumbnail, 100);
-  }, [isOpen, script]);
+  }, [isOpen, script, timeline]);
 
   // Generar con Gemini AI SEO Kit
   const handleGenerateAiSeo = async () => {
     try {
       setIsLoading(true);
-      const apiKey = getStoredApiKey() || undefined;
-
-      const response = await fetch('/api/generate-youtube-seo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          episodeTitle: script.episode_title,
-          episodeSummary: script.episode_summary,
-          turns: script.turns,
-          clientApiKey: apiKey,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.titles && Array.isArray(data.titles)) {
-          setTitles(data.titles);
-          setSelectedTitle(data.titles[0]);
-        }
-        if (data.description) {
-          setDescription(data.description);
-        }
-        if (data.tags && Array.isArray(data.tags)) {
-          setTags(data.tags);
-        }
-        setTimeout(drawThumbnail, 100);
+      const data = await generateYoutubeSeo(script, chapters);
+      if (Array.isArray(data.titles) && data.titles.length) {
+        setTitles(data.titles);
+        setSelectedTitle(data.titles[0]);
       }
-    } catch (e) {
+      if (data.description) {
+        setDescription(data.description);
+      }
+      if (Array.isArray(data.tags) && data.tags.length) {
+        setTags(data.tags);
+      }
+      setTimeout(drawThumbnail, 100);
+    } catch (e: any) {
       console.error('Error generando SEO:', e);
+      alert(e?.message || 'Error generando el kit SEO con Gemini.');
     } finally {
       setIsLoading(false);
     }

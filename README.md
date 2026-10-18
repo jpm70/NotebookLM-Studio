@@ -8,10 +8,32 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.35%2B-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![Edge--TTS](https://img.shields.io/badge/Edge--TTS-Neural_Voices-0078D7?logo=microsoft&logoColor=white)](https://github.com/rany2/edge-tts)
 [![MoviePy](https://img.shields.io/badge/MoviePy-Video_Engine-red)](https://zulko.github.io/moviepy/)
-[![Gemini](https://img.shields.io/badge/Google_Gemini-2.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
+[![Gemini](https://img.shields.io/badge/Google_Gemini-texto_·_voz_·_imagen-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
+[![GitHub Pages](https://img.shields.io/badge/GitHub_Pages-en_vivo-222?logo=github)](https://jpm70.github.io/NotebookLM-Studio/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 > **Generador integral, modular y profesional para transformar artículos, papers y documentos técnicos en podcasts de vídeo listos para YouTube y YouTube Shorts**, con diálogo espontáneo entre dos locutores al estilo *NotebookLM Audio Overview*, síntesis neuronal ultra HD, avatares reactivos, fondos anime consistentes en lote, terminal interactiva con coloreado de sintaxis, tablas autoadaptables, post-intro cinemática y exportación autónoma tanto en vídeo MP4 directo como en paquete ejecutable local de Python auditado al 100%.
+
+---
+
+## ▶️ Úsalo ya en el navegador
+
+**👉 [jpm70.github.io/NotebookLM-Studio](https://jpm70.github.io/NotebookLM-Studio/)**
+
+No hay servidor: todo se ejecuta en tu navegador con **tu propia clave de Gemini**.
+
+1. **Configurar API Key** (barra superior) → pega tu clave de [Google AI Studio](https://aistudio.google.com/apikey). Se guarda solo en este navegador (`localStorage`) y solo viaja a `generativelanguage.googleapis.com`.
+2. **1. Ingesta** → arrastra el `.html` del artículo de unfantasmaenelsistema.com. La app detecta título, subtítulo, categoría, puntos, tablas y bloques de comandos.
+3. **Generar Guion Estructurado** → Gemini escribe el diálogo entre los dos locutores, con una diapositiva por punto y diapositivas propias para cada tabla y terminal. (Sin clave también puedes usar *Generar Diapositivas 1:1 Directas*, que monta el guion solo con el artículo.)
+4. **4. Vídeo Final → Ajustes & Portada → Generar con Gemini los fondos** → el modelo de imagen de Gemini dibuja un fondo por diapositiva, con el mismo estilo y paleta en todas. Si tu clave no tiene cuota de imágenes, la app lo avisa y usa fondos vectoriales de reserva.
+5. **Compilar Episodio Completo** → sintetiza las voces con Gemini TTS y graba el vídeo (logo, portada, post-intro, subtítulos, música con auto-ducking y cierre) en `.mp4` (o `.webm` si tu navegador no graba MP4).
+6. **Kit SEO** → títulos, descripción con capítulos (con los tiempos reales del vídeo exportado) y etiquetas para YouTube.
+
+> **A tener en cuenta**
+> - La grabación es en **tiempo real**: un episodio de 8 minutos tarda unos 8 minutos. Mantén la pestaña visible mientras graba.
+> - Cada diapositiva gasta **1 petición de imagen** y cada turno **1 petición de voz**. Las voces se guardan en caché durante la sesión, así que al reintentar solo se piden las que faltan.
+> - Las cuotas gratuitas de los modelos de voz e imagen de Gemini son pequeñas y cambian a menudo. Si un modelo no está disponible para tu clave, la app prueba otro de la lista de modelos de tu cuenta y, si no hay ninguno, te dice exactamente qué falla.
+> - Usa Chrome o Edge recientes (grabación MP4 con `MediaRecorder`).
 
 ---
 
@@ -163,37 +185,20 @@ notebooklm_youtube_studio.zip
 
 ## 🛠️ Instalación y Puesta en Marcha
 
-### Opción A: Aplicación Web (Estudio Completo React + Express)
+### Opción A: Aplicación web (React + Vite, sin servidor)
 
-#### 1. Clonar el repositorio
+Requiere [Bun](https://bun.sh/).
+
 ```bash
-git clone https://github.com/TU_USUARIO/notebooklm-youtube-studio.git
-cd notebooklm-youtube-studio
+git clone https://github.com/jpm70/NotebookLM-Studio.git
+cd NotebookLM-Studio
+bun install
+bun run dev
 ```
 
-#### 2. Instalar dependencias
-```bash
-npm install
-```
+Abre `http://localhost:3000` y configura tu clave desde **Configurar API Key**. No hace falta ningún `.env`: la clave nunca se compila dentro de la app.
 
-#### 3. Configurar variables de entorno
-Crea tu archivo `.env` basado en `.env.example`:
-```bash
-cp .env.example .env
-```
-Edita `.env` e introduce tu clave de Gemini:
-```env
-GEMINI_API_KEY=tu_clave_api_de_google_gemini
-PORT=3000
-```
-
-#### 4. Iniciar en modo desarrollo
-```bash
-npm run dev
-```
-Abre tu navegador en `http://localhost:3000`.
-
----
+**Despliegue:** cada push a `main` lo publica en GitHub Pages con el workflow `.github/workflows/deploy.yml` (Bun → `bun run build` con `GITHUB_PAGES=true`, que ajusta la ruta base a `/NotebookLM-Studio/`).
 
 ### Opción B: Motor Autónomo en Python / Streamlit (Local)
 
@@ -234,11 +239,11 @@ La aplicación detectará automáticamente `script.json`, `subtitles.srt` y los 
 
 ```mermaid
 graph TD
-    A[Documento / URL / Paper] --> B[Article Parser & Text Ingestion]
-    B --> C[Gemini 2.5 Flash API]
+    A[Artículo HTML / Documento] --> B[Article Parser & Text Ingestion]
+    B --> C[Gemini texto · desde el navegador]
     C --> D[Guion Estructurado: DialogueTurn JSON]
-    D --> E1[Audio Synthesis: Gemini TTS & Edge-TTS]
-    D --> E2[Image Generation: Anime Scenery & SVG Terminal]
+    D --> E1[Voces: Gemini TTS · PCM → WAV]
+    D --> E2[Fondos: modelo de imagen de Gemini · SVG de reserva]
     D --> E3[Subtitle Generator: SRT & Timestamps]
     E1 --> F1[Video Canvas Renderer: 16:9 & 9:16]
     E2 --> F1

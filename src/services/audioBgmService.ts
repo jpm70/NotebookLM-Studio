@@ -4,6 +4,8 @@
  * o reproduce pistas cargadas por el usuario, con ducking suave al hablar.
  */
 
+import { getSharedAudioContext } from './sharedAudio';
+
 export type BgmTrackType = 'lofi' | 'synthwave' | 'acoustic' | 'ambient' | 'scifi' | 'custom' | 'none';
 
 export class AudioBgmService {
@@ -20,9 +22,8 @@ export class AudioBgmService {
   private oscillatorNodes: OscillatorNode[] = [];
 
   private initContext() {
-    if (!this.audioCtx) {
-      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.audioCtx = new AudioCtxClass();
+    if (!this.audioCtx || this.audioCtx.state === 'closed') {
+      this.audioCtx = getSharedAudioContext();
       this.gainNode = this.audioCtx.createGain();
       this.gainNode.gain.setValueAtTime(this.baseVolume, this.audioCtx.currentTime);
       this.gainNode.connect(this.audioCtx.destination);

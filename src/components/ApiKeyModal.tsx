@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Key, ShieldCheck, Check, Trash2, RefreshCw, Eye, EyeOff, AlertTriangle, ExternalLink } from 'lucide-react';
-import { getStoredApiKey, saveStoredApiKey, removeStoredApiKey, validateApiKey } from '../services/apiKeyStorage';
+import { getStoredApiKey, saveStoredApiKey, removeStoredApiKey } from '../services/apiKeyStorage';
+import { validateApiKey } from '../services/gemini';
 import { ConnectionStatus } from '../types';
 
 interface ApiKeyModalProps {
@@ -97,7 +98,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
           <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex items-start gap-3 text-xs text-slate-300">
             <ShieldCheck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
             <div>
-              <strong className="text-emerald-400">Privacidad absoluta garantizada:</strong> Tu clave nunca se almacena en servidores externos ni bases de datos. Permanece en tu propio navegador (`localStorage`), siendo totalmente compatible con entornos estáticos como <strong>GitHub Pages</strong>.
+              <strong className="text-emerald-400">Dónde va tu clave:</strong> se guarda solo en este navegador (<code>localStorage</code>) y solo se envía a la API de Google Gemini (generativelanguage.googleapis.com) para generar guion, voces e imágenes. No pasa por ningún otro servidor. Usa una clave propia y bórrala desde aquí si usas un equipo compartido.
             </div>
           </div>
 
