@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NotebookLM Studio to YouTube Video Generator</title>
+    <meta name="description" content="Generador integral de podcasts y vídeos para YouTube estilo NotebookLM con doble locutor, guion estructurado con Gemini, síntesis de audio, renderizado de vídeo reactivo y exportación completa del paquete en Python/Streamlit." />
+    <meta property="og:title" content="NotebookLM Studio to YouTube Video Generator" />
+    <meta property="og:description" content="Generador integral de podcasts y vídeos para YouTube estilo NotebookLM con doble locutor, guion estructurado con Gemini, síntesis de audio, renderizado de vídeo reactivo y exportación completa del paquete en Python/Streamlit." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Ignorar errores de transporte WebSocket de Vite dev server en entornos iframe/proxy de AI Studio
+      window.addEventListener('error', function(e) {
+        if (
+          e &&
+          (e.message?.includes('WebSocket') ||
+           e.message?.includes('createWebSocketModuleRunnerTransport') ||
+           e.filename?.includes('@vite/client'))
+        ) {
+          e.stopImmediatePropagation();
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function(e) {
+        var reason = e && (e.reason?.message || String(e.reason || ''));
+        if (reason && (reason.includes('WebSocket') || reason.includes('@vite/client'))) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      }, true);
+    </script>
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased selection:bg-amber-500/30 selection:text-amber-200">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

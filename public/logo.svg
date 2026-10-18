@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%" fill="none">
+  <!-- Ground Shadow -->
+  <ellipse cx="235" cy="385" rx="75" ry="14" fill="#9ca3af" opacity="0.6"/>
+
+  <!-- Wooden Rod / Broom stick -->
+  <g>
+    <!-- Stick lower portion -->
+    <path d="M90 325 L200 290 L210 320 L100 355 Z" fill="#9a3412" stroke="#1c1917" stroke-width="6" stroke-linejoin="round"/>
+    <ellipse cx="95" cy="340" rx="8" ry="15" fill="#451a03" stroke="#1c1917" stroke-width="4"/>
+    <!-- Stick upper portion (behind ghost) -->
+    <path d="M295 260 L385 130 L405 145 L315 275 Z" fill="#b45309" stroke="#1c1917" stroke-width="6" stroke-linejoin="round"/>
+  </g>
+
+  <!-- USB Flash Drive on tip of stick -->
+  <g transform="rotate(-35 390 140)">
+    <!-- USB Plug Connector -->
+    <rect x="420" y="125" width="28" height="24" rx="2" fill="#cbd5e1" stroke="#0f172a" stroke-width="4"/>
+    <rect x="432" y="130" width="6" height="5" fill="#0f172a"/>
+    <rect x="432" y="139" width="6" height="5" fill="#0f172a"/>
+
+    <!-- USB Body -->
+    <path d="M330 120 C330 115 340 110 355 110 L415 118 C422 119 425 125 425 135 L425 140 C425 150 422 156 415 157 L355 165 C340 165 330 160 330 155 Z" fill="#e2e8f0" stroke="#0f172a" stroke-width="6"/>
+    <!-- USB Red Glowing Core / Accent -->
+    <path d="M342 128 C345 124 355 122 368 123 L402 127 C408 128 410 132 410 137 C410 142 408 146 402 147 L368 151 C355 152 345 150 342 146 Z" fill="url(#usbRedGlow)" stroke="#991b1b" stroke-width="2"/>
+    <ellipse cx="360" cy="132" rx="10" ry="2" fill="#fecaca" opacity="0.8"/>
+  </g>
+
+  <!-- Ghost Body / Cloak -->
+  <!-- Tail & Body curves -->
+  <path d="M190 335 C175 325 155 295 160 250 C165 210 145 170 170 135 C195 100 255 105 275 130 C295 155 315 210 305 270 C298 315 260 335 240 335 C215 335 200 345 190 335 Z" fill="#ffffff" stroke="#0f172a" stroke-width="9" stroke-linejoin="round"/>
+
+  <!-- Left hood flap -->
+  <path d="M150 205 C140 220 135 245 148 248 C155 248 162 235 165 215 Z" fill="#e2e8f0" stroke="#0f172a" stroke-width="6"/>
+
+  <!-- Face Opening (Deep Dark Void) -->
+  <path d="M185 240 C170 215 175 165 210 148 C245 132 295 155 298 198 C300 240 265 268 220 268 C195 268 190 250 185 240 Z" fill="#18181b" stroke="#0f172a" stroke-width="7"/>
+
+  <!-- Ghost Eyes (Large Expressive Angled White Ovals) -->
+  <!-- Left Eye -->
+  <path d="M212 185 C222 185 230 198 230 215 C230 230 220 240 208 238 C198 236 195 218 195 205 C195 192 202 185 212 185 Z" fill="#ffffff"/>
+  <!-- Right Eye -->
+  <path d="M255 188 C265 190 272 205 270 222 C268 235 258 245 248 242 C240 240 238 225 240 210 C242 195 248 188 255 188 Z" fill="#ffffff"/>
+
+  <!-- Shading on Ghost Body for 3D depth -->
+  <path d="M190 330 C215 330 235 320 245 305 C235 320 205 325 185 320 Z" fill="#cbd5e1" opacity="0.6"/>
+
+  <defs>
+    <linearGradient id="usbRedGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ef4444"/>
+      <stop offset="50%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#b91c1c"/>
+    </linearGradient>
+  </defs>
+</svg>

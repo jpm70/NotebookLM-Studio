@@ -1,0 +1,6 @@
+{
+  "name": "NotebookLM Studio to YouTube Video Generator",
+  "description": "Generador integral de podcasts y vídeos para YouTube estilo NotebookLM con doble locutor, guion estructurado con Gemini, síntesis de audio, renderizado de vídeo reactivo y exportación completa del paquete en Python/Streamlit.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
