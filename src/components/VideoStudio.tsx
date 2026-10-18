@@ -51,7 +51,8 @@ import {
 import { sfxEngine } from '../services/sfxEngine';
 import { generateSubtitlesFromScript, triggerSrtDownload, buildSrtContent } from '../services/subtitleService';
 import { bgmService, BgmTrackType } from '../services/audioBgmService';
-import { getStoredApiKey } from '../services/apiKeyStorage';
+import { generateSlideBackground, buildFallbackSvg } from '../services/imageService';
+import { getSharedAudioContext } from '../services/sharedAudio';
 import { YouTubeMetadataModal } from './YouTubeMetadataModal';
 import { ShortsClipModal } from './ShortsClipModal';
 import { VideoTimelineEditor } from './VideoTimelineEditor';
@@ -95,7 +96,10 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportStageDescription, setExportStageDescription] = useState<string>('');
-  const [exportMode, setExportMode] = useState<'full' | 'teaser'>('teaser');
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [lastTimeline, setLastTimeline] = useState<{ turnStartTimes: number[]; outroStart: number } | null>(null);
+  const [exportedVideoExt, setExportedVideoExt] = useState<'mp4' | 'webm'>('mp4');
+  const [exportMode, setExportMode] = useState<'full' | 'teaser'>('full');
   const exportCancelRef = useRef<boolean>(false);
   const [exportedVideoUrl, setExportedVideoUrl] = useState<string | null>(null);
   const [showTimestamps, setShowTimestamps] = useState(false);
@@ -108,6 +112,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
   const [generatingTurnIdx, setGeneratingTurnIdx] = useState<number | null>(null);
   const [selectedAnimeMood, setSelectedAnimeMood] = useState<'shinkai' | 'cyberpunk' | 'ghibli'>('shinkai');
   const [batchAnimeProgressText, setBatchAnimeProgressText] = useState<string | null>(null);
+  const batchCancelRef = useRef(false);
 
   // Modales
   const [isYouTubeModalOpen, setIsYouTubeModalOpen] = useState(false);
@@ -147,6 +152,16 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
   };
 
   const branding = settings.branding;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const videoFileSlug =
+    (branding.introTitle || script.episode_title || 'podcast')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'podcast';
 
   // Calcular timestamps de subtítulos sincronizados con el audio y offset de intro
   const introOffset = branding.includeIntro ? (branding.introDuration || 3) : 0;
@@ -405,38 +420,41 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     reader.readAsDataURL(file);
   };
 
-  // Generar fondo ilustrado con IA para un turno
+  // Guarda el fondo de un turno usando el estado más reciente (evita perder fondos en lote)
+  const setTurnBackground = (turnIdx: number, imageUrl: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      branding: {
+        ...prev.branding,
+        turnBackgroundImages: { ...(prev.branding.turnBackgroundImages || {}), [turnIdx]: imageUrl },
+      },
+    }));
+  };
+
+  // Generar con Gemini el fondo ilustrado de un turno
   const handleGenerateTurnImage = async (turnIdx: number) => {
     const turn = script.turns[turnIdx];
     if (!turn) return;
 
     try {
       setGeneratingTurnIdx(turnIdx);
-      const apiKey = getStoredApiKey() || undefined;
-      const res = await fetch('/api/generate-turn-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          visualPrompt: turn.visual_prompt,
-          visualTitle: turn.visual_title,
-          visualStyle: branding.visualStyle || 'anime',
-          clientApiKey: apiKey,
-        }),
+      setBatchAnimeProgressText(`Generando con Gemini el fondo de la diapositiva ${turnIdx + 1}...`);
+      const result = await generateSlideBackground(turn, {
+        style: branding.visualStyle || 'anime',
+        mood: selectedAnimeMood,
+        aspectRatio: settings.aspectRatio,
+        episodeTitle: script.episode_title,
+        index: turnIdx,
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.imageUrl) {
-          updateBranding({
-            turnBackgroundImages: {
-              ...(branding.turnBackgroundImages || {}),
-              [turnIdx]: data.imageUrl,
-            },
-          });
-        }
-      }
-    } catch (e) {
+      setTurnBackground(turnIdx, result.imageUrl);
+      setBatchAnimeProgressText(
+        result.source === 'gemini'
+          ? `✓ Fondo de la diapositiva ${turnIdx + 1} generado con ${result.model}.`
+          : `⚠ Gemini no pudo generar la imagen; se usa un fondo vectorial de reserva. Motivo: ${result.error}`
+      );
+    } catch (e: any) {
       console.error('Error generando fondo ilustrado:', e);
+      setBatchAnimeProgressText(`⚠ ${e?.message || 'Error generando el fondo.'}`);
     } finally {
       setGeneratingTurnIdx(null);
     }
@@ -459,56 +477,62 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     await handleBatchGenerateAnimeBackgrounds(selectedAnimeMood);
   };
 
-  // Generación automática en lote de todos los fondos anime con estética consistente
+  // Generación en lote con Gemini: mismo estilo y paleta en todas las diapositivas.
+  // Si la primera imagen falla por cuota o modelo no disponible, el resto usa SVG sin seguir gastando peticiones.
   const handleBatchGenerateAnimeBackgrounds = async (mood: 'shinkai' | 'cyberpunk' | 'ghibli' = selectedAnimeMood) => {
+    const total = script.turns.length;
+    batchCancelRef.current = false;
     setIsGeneratingTurnImages(true);
-    setBatchAnimeProgressText(`Generando lote anime consistente (${mood.toUpperCase()})...`);
-    try {
-      const apiKey = getStoredApiKey() || undefined;
-      const res = await fetch('/api/generate-anime-batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          turns: script.turns.map((t) => ({
-            visualPrompt: t.visual_prompt,
-            visualTitle: t.visual_title,
-            slideType: t.slideType,
-            sectionTitle: t.sectionTitle,
-          })),
-          animeMood: mood,
-          episodeTitle: script.episode_title,
-          clientApiKey: apiKey,
-        }),
-      });
+    let generated = 0;
+    let fallbacks = 0;
+    let geminiUnavailable: string | null = null;
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.backgrounds) {
-          updateBranding({
-            visualStyle: 'anime',
-            turnBackgroundImages: {
-              ...(branding.turnBackgroundImages || {}),
-              ...data.backgrounds,
-            },
-          });
-          setBatchAnimeProgressText(`✓ ¡Lote completado! ${Object.keys(data.backgrounds).length} fondos anime generados.`);
+    try {
+      for (let i = 0; i < total; i++) {
+        if (batchCancelRef.current) break;
+        const turn = script.turns[i];
+        setBatchAnimeProgressText(`Generando con Gemini el fondo ${i + 1} de ${total}...`);
+
+        if (geminiUnavailable) {
+          setTurnBackground(
+            i,
+            buildFallbackSvg(turn.visual_title, branding.visualStyle || 'anime', mood, i, settings.aspectRatio)
+          );
+          fallbacks++;
+          continue;
         }
-      } else {
-        // Fallback iterativo
-        for (let i = 0; i < script.turns.length; i++) {
-          setBatchAnimeProgressText(`Generando fondo ${i + 1} de ${script.turns.length}...`);
-          await handleGenerateTurnImage(i);
+
+        const result = await generateSlideBackground(turn, {
+          style: branding.visualStyle || 'anime',
+          mood,
+          aspectRatio: settings.aspectRatio,
+          episodeTitle: script.episode_title,
+          index: i,
+        });
+        setTurnBackground(i, result.imageUrl);
+        if (result.source === 'gemini') {
+          generated++;
+        } else {
+          fallbacks++;
+          if (generated === 0 && result.error && /cuota|no tiene ningún modelo|facturación|no es válida|rechazado/i.test(result.error)) {
+            geminiUnavailable = result.error;
+          }
         }
       }
-    } catch (e) {
-      console.error('Error generando lote de fondos anime:', e);
-      for (let i = 0; i < script.turns.length; i++) {
-        setBatchAnimeProgressText(`Generando fondo ${i + 1} de ${script.turns.length}...`);
-        await handleGenerateTurnImage(i);
-      }
+
+      const cancelled = batchCancelRef.current ? ' (detenido)' : '';
+      setBatchAnimeProgressText(
+        geminiUnavailable
+          ? `⚠ Gemini no puede generar imágenes con esta clave: ${geminiUnavailable} Se han usado ${fallbacks} fondos vectoriales de reserva.`
+          : fallbacks > 0
+          ? `✓ ${generated} fondos generados con Gemini y ${fallbacks} de reserva (alguna petición falló)${cancelled}.`
+          : `✓ ¡Lote completado! ${generated} fondos generados con Gemini${cancelled}.`
+      );
+    } catch (e: any) {
+      console.error('Error generando lote de fondos:', e);
+      setBatchAnimeProgressText(`⚠ ${e?.message || 'Error generando los fondos.'}`);
     } finally {
       setIsGeneratingTurnImages(false);
-      setTimeout(() => setBatchAnimeProgressText(null), 3500);
     }
   };
 
@@ -621,40 +645,41 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     setExportedVideoUrl(null);
     setExportStageDescription('Inicializando motor de renderizado y canales de audio...');
 
+    // Ajustes más recientes (los fondos generados en lote pueden haber llegado tras el último render)
+    const branding = settingsRef.current.branding;
     const canvas = canvasRef.current;
     const renderer = new VideoRenderer(canvas);
     renderer.resize(settings.aspectRatio, '720p');
     renderer.preloadImages(branding.logoUrl || DEFAULT_LOGO_BASE64, branding.introCoverUrl);
-    renderer.preloadTurnBackgrounds(branding.turnBackgroundImages);
+    setExportStageDescription('Preparando los fondos de las diapositivas...');
+    await renderer.preloadTurnBackgrounds(branding.turnBackgroundImages);
 
     const fps = 30;
     const stream = canvas.captureStream(fps);
 
-    // Audio context sintético mezclando BGM, SFX y voces de los locutores en la pista del vídeo
-    let audioContext: AudioContext | null = null;
-    let destNode: MediaStreamAudioDestinationNode | null = null;
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioCtx) {
-        audioContext = new AudioCtx();
-        destNode = audioContext.createMediaStreamDestination();
-
-        // Iniciar BGM si está activado
-        if (branding.enabledBgm) {
-          bgmService.start(branding.bgmTrack, branding.bgmVolume, branding.customBgmDataUrl);
-          const bgmGain = bgmService.getGainNode();
-          if (bgmGain) {
-            bgmGain.connect(destNode);
-          }
-        }
-
-        destNode.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
+    // Un único AudioContext compartido mezcla voces, música de fondo y efectos en la pista del vídeo
+    const audioContext = getSharedAudioContext();
+    const destNode = audioContext.createMediaStreamDestination();
+    destNode.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
+    const sfxOut = sfxEngine.getOutput();
+    sfxOut.connect(destNode);
+    let bgmGain: GainNode | null = null;
+    const releaseAudio = () => {
+      try {
+        sfxOut.disconnect(destNode);
+      } catch {
+        // ya desconectado
       }
-    } catch (e) {
-      console.warn('AudioContext no disponible para exportación:', e);
-    }
+      try {
+        bgmGain?.disconnect(destNode);
+      } catch {
+        // ya desconectado
+      }
+      bgmService.stop();
+    };
 
     // FASE 1: SINTETIZAR Y PRECARGAR VOCES DE LOS LOCUTORES (Host A y Host B)
+    setExportError(null);
     setExportStageDescription('Sintetizando pistas vocales de los locutores...');
     const turnAudioBuffers: (AudioBuffer | null)[] = [];
     const turnDurations: number[] = [];
@@ -662,8 +687,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     for (let i = 0; i < script.turns.length; i++) {
       if (exportCancelRef.current) {
         setIsExporting(false);
-        bgmService.stop();
-        if (audioContext && audioContext.state !== 'closed') audioContext.close();
+        releaseAudio();
         return;
       }
 
@@ -675,36 +699,37 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
       setExportStageDescription(`[Voz ${i + 1}/${script.turns.length}] Sintetizando voz de ${host.name} (${voiceName})...`);
       setExportProgress(Math.round(((i + 1) / (script.turns.length + 2)) * 25));
 
-      let loadedBuffer: AudioBuffer | null = null;
+      let loadedBuffer: AudioBuffer;
       try {
         const audioUrl = await browserTTS.synthesizeWithGemini(turn.text, voiceName, turn.emotion);
-        if (audioUrl && audioContext) {
-          const ab = base64ToArrayBuffer(audioUrl);
-          loadedBuffer = await audioContext.decodeAudioData(ab.slice(0));
-        }
-      } catch (err) {
-        console.warn(`Fallback acústico para turno ${i}:`, err);
-        if (audioContext) {
-          const fallbackDur = targetMode === 'teaser' ? 2.5 : 4.5;
-          const sampleRate = audioContext.sampleRate;
-          const buf = audioContext.createBuffer(1, Math.round(sampleRate * fallbackDur), sampleRate);
-          const data = buf.getChannelData(0);
-          const freq = isHostA ? 190 : 270;
-          for (let s = 0; s < data.length; s++) {
-            const t = s / sampleRate;
-            const env = Math.sin((t / fallbackDur) * Math.PI) * Math.exp(-t * 0.35);
-            data[s] = Math.sin(2 * Math.PI * (freq + Math.sin(t * 10) * 20) * t) * 0.15 * env;
-          }
-          loadedBuffer = buf;
-        }
+        const ab = base64ToArrayBuffer(audioUrl);
+        loadedBuffer = await audioContext.decodeAudioData(ab.slice(0));
+      } catch (err: any) {
+        // Sin voz no hay vídeo: mejor parar que publicar turnos mudos o con pitidos
+        console.error(`Error sintetizando la voz del turno ${i + 1}:`, err);
+        releaseAudio();
+        setIsExporting(false);
+        setExportStageDescription('');
+        setExportError(
+          `No se pudo sintetizar la voz del turno ${i + 1} con Gemini: ${String(err?.message || err).replace(/\.$/, '')}. ` +
+            'Las voces ya generadas se guardan en caché, así que al reintentar solo se piden las que faltan.'
+        );
+        return;
       }
 
       turnAudioBuffers.push(loadedBuffer);
-      const rawDur = loadedBuffer ? loadedBuffer.duration : 4.0;
+      const rawDur = loadedBuffer.duration;
       const calculatedTurnDur = targetMode === 'teaser'
         ? Math.min(3.8, Math.max(2.2, rawDur * 0.8))
         : Math.max(3.2, rawDur + (settings.pauseBetweenSpeakers || 0.3));
       turnDurations.push(calculatedTurnDur);
+    }
+
+    // La música arranca justo al empezar a grabar, no durante la síntesis de voces
+    if (branding.enabledBgm) {
+      bgmService.start(branding.bgmTrack, branding.bgmVolume, branding.customBgmDataUrl);
+      bgmGain = bgmService.getGainNode();
+      bgmGain?.connect(destNode);
     }
 
     const mimeType = MediaRecorder.isTypeSupported('video/mp4;codecs=avc1,mp4a.40.2')
@@ -729,15 +754,13 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
       if (!exportCancelRef.current && chunks.length > 0) {
         const blob = new Blob(chunks, { type: mimeType });
         const videoUrl = URL.createObjectURL(blob);
+        setExportedVideoExt(mimeType.includes('mp4') ? 'mp4' : 'webm');
         setExportedVideoUrl(videoUrl);
       }
       setIsExporting(false);
       setExportProgress(100);
       setExportStageDescription('');
-      bgmService.stop();
-      if (audioContext && audioContext.state !== 'closed') {
-        audioContext.close();
-      }
+      releaseAudio();
     };
 
     recorder.start(100);
@@ -754,6 +777,9 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
       accumulatedDialogueTime += turnDurations[i];
     }
     const dialogueDuration = accumulatedDialogueTime;
+    if (targetMode === 'full') {
+      setLastTimeline({ turnStartTimes: [...turnStartTimes], outroStart: introDuration + postIntroDuration + dialogueDuration });
+    }
     const totalDurationSec = introDuration + postIntroDuration + dialogueDuration + outroDuration;
     const totalFrames = Math.max(30, Math.round(totalDurationSec * fps));
 
@@ -837,7 +863,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
         if (!playedTurnIndices.has(turnIdx)) {
           playedTurnIndices.add(turnIdx);
           const buf = turnAudioBuffers[turnIdx];
-          if (buf && destNode && audioContext && audioContext.state !== 'closed') {
+          if (buf) {
             try {
               const srcNode = audioContext.createBufferSource();
               srcNode.buffer = buf;
@@ -1351,7 +1377,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                   </span>
                 </h4>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Genera automáticamente todos los fondos anime con dirección artística uniforme para las {script.turns.length} diapositivas.
+                  Gemini dibuja un fondo por diapositiva con el mismo estilo y paleta, a partir del prompt visual de cada turno ({script.turns.length} peticiones de imagen a tu clave).
                 </p>
               </div>
             </div>
@@ -1412,9 +1438,39 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
 
             {/* Banner de Progreso de Generación en Lote */}
             {batchAnimeProgressText && (
-              <div className="p-3 rounded-xl bg-purple-950/60 border border-purple-500/40 text-xs text-purple-200 flex items-center gap-2 animate-in fade-in">
-                <Loader2 className="w-4 h-4 text-purple-400 animate-spin shrink-0" />
-                <span className="font-semibold truncate">{batchAnimeProgressText}</span>
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-start gap-2 animate-in fade-in ${
+                  batchAnimeProgressText.startsWith('⚠')
+                    ? 'bg-amber-950/60 border-amber-500/40 text-amber-200'
+                    : 'bg-purple-950/60 border-purple-500/40 text-purple-200'
+                }`}
+              >
+                {(isGeneratingTurnImages || generatingTurnIdx !== null) && (
+                  <Loader2 className="w-4 h-4 text-purple-400 animate-spin shrink-0" />
+                )}
+                <span className="font-semibold flex-1 break-words">{batchAnimeProgressText}</span>
+                {isGeneratingTurnImages ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      batchCancelRef.current = true;
+                    }}
+                    className="px-2 py-0.5 rounded-lg bg-slate-900 border border-slate-700 text-[10px] text-slate-200 hover:text-white shrink-0"
+                  >
+                    Detener
+                  </button>
+                ) : (
+                  generatingTurnIdx === null && (
+                    <button
+                      type="button"
+                      onClick={() => setBatchAnimeProgressText(null)}
+                      className="px-1.5 text-slate-400 hover:text-white shrink-0"
+                      title="Cerrar aviso"
+                    >
+                      ×
+                    </button>
+                  )
+                )}
               </div>
             )}
 
@@ -1429,12 +1485,12 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                 {isGeneratingTurnImages ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Generando fondos anime en lote...</span>
+                    <span>Generando fondos con Gemini...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 fill-current" />
-                    <span>Generar en Lote Todos los Fondos Anime ({script.turns.length} Diapositivas)</span>
+                    <span>Generar con Gemini los fondos de las {script.turns.length} diapositivas</span>
                   </>
                 )}
               </button>
@@ -2437,7 +2493,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                   }`}
                 >
                   <span className="flex items-center gap-1">🎬 Episodio Completo</span>
-                  <span className="text-[10px] font-normal opacity-80">(~45-60s • Detallado)</span>
+                  <span className="text-[10px] font-normal opacity-80">(voces completas • para YouTube)</span>
                 </button>
               </div>
             )}
@@ -2458,7 +2514,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                 </div>
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-[10px] text-slate-400">
-                    Modo: {exportMode === 'teaser' ? 'Resumen (2.2s/diapo)' : 'Completo (4.5s/diapo)'}
+                    Modo: {exportMode === 'teaser' ? 'Resumen (2.2s/diapo)' : 'Completo (duración real de cada voz)'}
                   </span>
                   <button
                     type="button"
@@ -2470,6 +2526,27 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                     Cancelar Exportación
                   </button>
                 </div>
+              </div>
+            )}
+
+            {isExporting && (
+              <p className="text-[10px] text-slate-400 leading-snug">
+                La grabación es en tiempo real: un episodio de 8 minutos tarda unos 8 minutos. Mantén esta pestaña visible
+                hasta que termine; si la ocultas, el navegador ralentiza la grabación.
+              </p>
+            )}
+
+            {exportError && !isExporting && (
+              <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-200 text-[11px] flex items-start gap-2">
+                <span className="flex-1 break-words">{exportError}</span>
+                <button
+                  type="button"
+                  onClick={() => setExportError(null)}
+                  className="px-1.5 text-rose-300 hover:text-white shrink-0"
+                  title="Cerrar aviso"
+                >
+                  ×
+                </button>
               </div>
             )}
 
@@ -2531,11 +2608,11 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                 <video src={exportedVideoUrl} controls className="w-full rounded-lg border border-slate-800 bg-black max-h-[220px]" />
                 <a
                   href={exportedVideoUrl}
-                  download={`podcast_${settings.aspectRatio === '9:16' ? 'shorts' : 'youtube'}.mp4`}
+                  download={`${videoFileSlug}_${settings.aspectRatio === '9:16' ? 'shorts' : 'youtube'}.${exportedVideoExt}`}
                   className="w-full py-2.5 px-4 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg transition-all"
                 >
                   <Download className="w-4 h-4" />
-                  Descargar Vídeo Completo (.mp4)
+                  Descargar Vídeo Completo (.{exportedVideoExt})
                 </a>
               </div>
             )}
@@ -2553,6 +2630,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
         hostA={hostA}
         hostB={hostB}
         branding={branding}
+        timeline={lastTimeline}
       />
 
       <ShortsClipModal

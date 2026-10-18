@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // En GitHub Pages la app vive en /NotebookLM-Studio/ (project page), en local en la raíz
+    base: process.env.GITHUB_PAGES ? '/NotebookLM-Studio/' : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

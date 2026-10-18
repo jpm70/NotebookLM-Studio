@@ -1,5 +1,5 @@
 import { DialogueTurn, HostConfig } from '../types';
-import { getStoredApiKey } from './apiKeyStorage';
+import { generateContent, responseInlineData } from './gemini';
 import { sfxEngine } from './sfxEngine';
 
 export interface PlaybackState {
@@ -19,6 +19,43 @@ export const GEMINI_NEURAL_VOICES = [
   { id: 'Aoede', name: 'Aoede (Femenina - Contralto Rica Elegante)', gender: 'female' },
   { id: 'Leda', name: 'Leda (Femenina - Soprano Suave Intimista)', gender: 'female' },
 ] as const;
+
+/** Convierte la respuesta de Gemini TTS en un data URL reproducible (WAV si llega PCM crudo). */
+export function inlineAudioToDataUrl(base64: string, mimeType: string): string {
+  const mime = (mimeType || '').toLowerCase();
+  if (mime && !mime.includes('l16') && !mime.includes('pcm')) {
+    return `data:${mime};base64,${base64}`;
+  }
+  const rate = parseInt(mime.match(/rate=(\d+)/)?.[1] || '24000', 10);
+  const channels = parseInt(mime.match(/channels=(\d+)/)?.[1] || '1', 10);
+  const pcm = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const wav = new Uint8Array(44 + pcm.length);
+  const view = new DataView(wav.buffer);
+  const writeStr = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + pcm.length, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, channels, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * channels * 2, true);
+  view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, pcm.length, true);
+  wav.set(pcm, 44);
+
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < wav.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, Array.from(wav.subarray(i, i + chunk)));
+  }
+  return `data:audio/wav;base64,${btoa(binary)}`;
+}
 
 class AudioTTSService {
   private browserVoices: SpeechSynthesisVoice[] = [];
@@ -92,42 +129,38 @@ class AudioTTSService {
   }
 
   /**
-   * Sintetiza audio en alta definición usando Gemini Neural TTS (backend /api/tts-synthesize)
+   * Sintetiza audio con Gemini TTS directamente desde el navegador.
+   * Gemini devuelve PCM 16 bits sin cabecera (audio/L16;rate=24000): se envuelve en WAV
+   * para que <audio> y AudioContext.decodeAudioData puedan reproducirlo.
    */
   public async synthesizeWithGemini(
     text: string,
     voiceName: string = 'Puck',
     emotion?: string
   ): Promise<string> {
-    const cacheKey = `${voiceName}_${emotion || ''}_${text}`;
+    const validVoices = GEMINI_NEURAL_VOICES.map((v) => v.id as string);
+    const chosenVoice = validVoices.includes(voiceName) ? voiceName : 'Puck';
+    const cacheKey = `${chosenVoice}_${text}`;
     if (this.audioCache.has(cacheKey)) {
       return this.audioCache.get(cacheKey)!;
     }
 
-    const clientApiKey = getStoredApiKey() || undefined;
-
-    const response = await fetch('/api/tts-synthesize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text,
-        voiceName,
-        emotion,
-        clientApiKey,
-      }),
+    const { data } = await generateContent('tts', {
+      contents: [{ parts: [{ text }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: chosenVoice } },
+        },
+      },
     });
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err?.error || `Error HTTP ${response.status} en síntesis neural Gemini`);
+    const inline = responseInlineData(data);
+    if (!inline) {
+      throw new Error('Gemini TTS no devolvió ninguna pista de audio.');
     }
 
-    const data = await response.json();
-    if (!data.audioBase64) {
-      throw new Error('No se recibió la pista de audio de Gemini');
-    }
-
-    const audioUrl = `data:audio/wav;base64,${data.audioBase64}`;
+    const audioUrl = inlineAudioToDataUrl(inline.data, inline.mimeType);
     this.audioCache.set(cacheKey, audioUrl);
     return audioUrl;
   }
@@ -367,7 +400,7 @@ class AudioTTSService {
   ): Promise<void> {
     this.isCancelled = false;
 
-    // Si se eligió Gemini TTS, verificar si hay conectividad con backend
+    // Si Gemini TTS falla en un turno, el resto se reproduce con la voz del navegador
     let activeEngine = ttsEngine;
 
     for (let i = 0; i < turns.length; i++) {
