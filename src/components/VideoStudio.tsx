@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Film,
   Play,
@@ -89,6 +89,13 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
   onLogoUpload,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // El lienzo solo existe en algunas vistas: guardarlo en estado hace que el renderizador
+  // se cree en cuanto aparece (antes la vista previa salía en blanco hasta cambiar un ajuste)
+  const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
+  const attachCanvas = useCallback((el: HTMLCanvasElement | null) => {
+    canvasRef.current = el;
+    setCanvasEl(el);
+  }, []);
   const rendererRef = useRef<VideoRenderer | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const introLogoInputRef = useRef<HTMLInputElement | null>(null);
@@ -605,7 +612,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
       previewStage,
       0.5
     );
-  }, [settings.aspectRatio, currentTurnIndex, script, hostA, hostB, branding, previewStage]);
+  }, [canvasEl, settings.aspectRatio, currentTurnIndex, script, hostA, hostB, branding, previewStage]);
 
   // Bucle de animación en vivo de previsualización
   useEffect(() => {
@@ -667,7 +674,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
       cancelAnimationFrame(animId);
       if (!isPlayingBgmTest) bgmService.stop();
     };
-  }, [isPlayingPreview, currentTurnIndex, script, hostA, hostB, settings.aspectRatio, branding, previewStage, isPlayingBgmTest]);
+  }, [canvasEl, isPlayingPreview, currentTurnIndex, script, hostA, hostB, settings.aspectRatio, branding, previewStage, isPlayingBgmTest]);
 
   // Exportar vídeo a .mp4 con integración directa de voces de locutores, BGM, Auto-Ducking y SFX
   const handleExportVideo = async (targetMode: 'full' | 'teaser' = exportMode) => {
@@ -1180,7 +1187,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
               isVertical ? 'max-w-[340px] aspect-[9/16]' : 'max-w-2xl w-full aspect-video'
             }`}
           >
-            <canvas ref={canvasRef} className="w-full h-full object-contain block bg-slate-950" />
+            <canvas ref={attachCanvas} className="w-full h-full object-contain block bg-slate-950" />
 
             {/* Overlaid preview badge */}
             <div className="absolute top-3 left-3 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md text-[10px] text-amber-400 font-mono font-bold flex items-center gap-1">
