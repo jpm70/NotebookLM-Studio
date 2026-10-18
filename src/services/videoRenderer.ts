@@ -344,7 +344,12 @@ export class VideoRenderer {
     const titleY = isVertical ? h * 0.11 : h * 0.14;
     ctx.fillStyle = '#ffffff';
     ctx.font = `700 ${Math.round(h * 0.032)}px "Plus Jakarta Sans", sans-serif`;
-    const titleTruncated = currentVisualTitle.length > 50 ? currentVisualTitle.substring(0, 48) + '...' : currentVisualTitle;
+    // Recorte según el ancho real (en 9:16 un título de 50 caracteres se salía por los lados)
+    let titleTruncated = currentVisualTitle;
+    while (titleTruncated.length > 8 && ctx.measureText(titleTruncated).width > w * 0.9) {
+      titleTruncated = titleTruncated.slice(0, -2).trimEnd() + '…';
+      titleTruncated = titleTruncated.replace(/…+$/, '…');
+    }
     ctx.fillText(titleTruncated, w / 2, titleY);
 
     ctx.fillStyle = '#94a3b8';
@@ -385,25 +390,17 @@ export class VideoRenderer {
       );
     }
 
-    // 4. Avatares de los locutores y Backchanneling de Reacción
-    const avatarRadius = isVertical
-      ? (hasCenterSlide ? w * 0.11 : w * 0.18)
-      : (hasCenterSlide ? w * 0.065 : w * 0.09);
+    // 4. Avatares pequeños a los lados de la tarjeta de subtítulos, para no tapar la diapositiva
+    const cardTop = isVertical ? (hasCenterSlide ? h * 0.69 : h * 0.58) : h * 0.67;
+    const cardBottom = h * 0.93;
+    const sideSlot = isVertical ? w * 0.17 : w * 0.14;
+    const avatarRadius = Math.min(sideSlot * 0.34, isVertical ? w * 0.06 : h * 0.07);
+    const avatarY = cardTop + (cardBottom - cardTop) * 0.42;
+    const hostAX = sideSlot / 2;
+    const hostBX = w - sideSlot / 2;
 
-    const avatarY = isVertical
-      ? (hasCenterSlide ? h * 0.54 : h * 0.32)
-      : (hasCenterSlide ? h * 0.38 : h * 0.40);
-
-    const hostAX = isVertical
-      ? w * 0.28
-      : (hasCenterSlide ? w * 0.10 : w * 0.28);
-
-    const hostBX = isVertical
-      ? w * 0.72
-      : (hasCenterSlide ? w * 0.90 : w * 0.72);
-
-    const pulseA = isHostA && isPlaying ? Math.sin(time * 6) * 6 : 0;
-    const pulseB = !isHostA && isPlaying ? Math.sin(time * 6) * 6 : 0;
+    const pulseA = isHostA && isPlaying ? Math.sin(time * 6) * 3 : 0;
+    const pulseB = !isHostA && isPlaying ? Math.sin(time * 6) * 3 : 0;
 
     // Reacción orgánica del oyente (Backchanneling)
     let reactionHostA: string | null = null;
@@ -431,14 +428,12 @@ export class VideoRenderer {
     this.drawAvatar(hostAX, avatarY, avatarRadius + pulseA, hostA, isHostA && isPlaying, '#3b82f6', h, reactionHostA);
     this.drawAvatar(hostBX, avatarY, avatarRadius + pulseB, hostB, !isHostA && isPlaying, '#f59e0b', h, reactionHostB);
 
-    // 5. Espectro de ondas sonoras reactivas
-    const waveY = isVertical ? (hasCenterSlide ? h * 0.64 : h * 0.49) : (hasCenterSlide ? h * 0.59 : h * 0.58);
+    // 5. Espectro de ondas sonoras reactivas, justo encima de los subtítulos
+    const waveY = cardTop - h * (isVertical ? 0.03 : 0.035);
     this.drawSoundWave(waveY, isVertical, isPlaying, time, w, h);
 
-    // 6. Tarjeta de subtítulos / diálogo sincronizado
-    const cardMargin = isVertical ? w * 0.06 : w * 0.08;
-    const cardTop = isVertical ? (hasCenterSlide ? h * 0.69 : h * 0.58) : h * 0.67;
-    const cardBottom = isVertical ? h * 0.93 : h * 0.93;
+    // 6. Tarjeta de subtítulos / diálogo sincronizado, entre los dos avatares
+    const cardMargin = sideSlot;
     const cardWidth = w - cardMargin * 2;
     const cardHeight = cardBottom - cardTop;
 
@@ -1136,14 +1131,14 @@ export class VideoRenderer {
     if (isActive) {
       ctx.save();
       ctx.beginPath();
-      ctx.arc(x, y, radius + 12, 0, Math.PI * 2);
+      ctx.arc(x, y, radius + 8, 0, Math.PI * 2);
       ctx.fillStyle = themeColor === '#3b82f6' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(245, 158, 11, 0.25)';
       ctx.fill();
 
       ctx.beginPath();
-      ctx.arc(x, y, radius + 5, 0, Math.PI * 2);
+      ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
       ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 2.5;
       ctx.stroke();
       ctx.restore();
     } else {
@@ -1182,18 +1177,14 @@ export class VideoRenderer {
     ctx.save();
     ctx.textAlign = 'center';
     ctx.fillStyle = isActive ? '#ffffff' : '#94a3b8';
-    ctx.font = `700 ${Math.round(canvasHeight * 0.022)}px "Plus Jakarta Sans", sans-serif`;
-    ctx.fillText(host.name, x, y + radius + canvasHeight * 0.035);
-
-    ctx.fillStyle = '#64748b';
-    ctx.font = `500 ${Math.round(canvasHeight * 0.015)}px "Plus Jakarta Sans", sans-serif`;
-    ctx.fillText(host.role, x, y + radius + canvasHeight * 0.058);
+    ctx.font = `700 ${Math.round(canvasHeight * 0.02)}px "Plus Jakarta Sans", sans-serif`;
+    ctx.fillText(host.name, x, y + radius + canvasHeight * 0.032);
 
     // Globo de reacción de asentimiento / complicidad (Backchanneling)
     if (reactionEmoji) {
       const bubbleX = x + radius * 0.75;
       const bubbleY = y - radius * 0.65;
-      const bubbleR = Math.max(16, radius * 0.32);
+      const bubbleR = Math.max(12, radius * 0.34);
 
       ctx.save();
       ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
@@ -1268,6 +1259,8 @@ export class VideoRenderer {
 
     const fontScale = fontSizeKey === 'large' ? 0.030 : fontSizeKey === 'small' ? 0.020 : 0.025;
     const textSize = Math.round(canvasHeight * fontScale);
+    // Caracteres por línea limitados por el ancho de la tarjeta (los avatares ocupan los laterales)
+    const fitChars = (base: number) => Math.min(base, Math.max(16, Math.floor((width - 32) / (textSize * 0.56))));
 
     if (styleKey === 'karaoke') {
       // Estilo Karaoke Viral (TikTok / Shorts / Reels): Resaltado palabra por palabra
@@ -1299,7 +1292,7 @@ export class VideoRenderer {
       ctx.roundRect(x, y + 54, width, height - 60, 20);
       ctx.fill();
 
-      const lines = this.wrapText(text, canvasWidth > canvasHeight ? 52 : 26);
+      const lines = this.wrapText(text, fitChars(canvasWidth > canvasHeight ? 52 : 26));
       const startY = y + 90;
       let globalWordIdx = 0;
 
@@ -1359,7 +1352,7 @@ export class VideoRenderer {
       ctx.shadowColor = 'rgba(0,0,0,0.95)';
       ctx.shadowBlur = 12;
 
-      const lines = this.wrapText(text, canvasWidth > canvasHeight ? 56 : 28);
+      const lines = this.wrapText(text, fitChars(canvasWidth > canvasHeight ? 56 : 28));
       let lineY = y + 75;
       for (const line of lines.slice(0, 3)) {
         ctx.strokeText(line, canvasWidth / 2, lineY);
@@ -1383,7 +1376,7 @@ export class VideoRenderer {
       ctx.strokeStyle = '#000000';
       ctx.lineWidth = 5;
 
-      const lines = this.wrapText(text, canvasWidth > canvasHeight ? 56 : 30);
+      const lines = this.wrapText(text, fitChars(canvasWidth > canvasHeight ? 56 : 30));
       let lineY = y + height - 40 - (lines.length - 1) * (textSize * 1.3);
       for (const line of lines.slice(0, 3)) {
         ctx.strokeText(line, canvasWidth / 2, lineY);
@@ -1395,24 +1388,24 @@ export class VideoRenderer {
       const barY = canvasHeight * 0.78;
       const barH = canvasHeight * 0.18;
       ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-      ctx.fillRect(0, barY, canvasWidth, barH);
+      ctx.fillRect(x, barY, width, barH);
 
       // Línea superior con color del anfitrión
       ctx.fillStyle = isHostA ? '#3b82f6' : '#f59e0b';
-      ctx.fillRect(0, barY, canvasWidth, 3);
+      ctx.fillRect(x, barY, width, 3);
 
       // Speaker tag
       ctx.font = `700 ${Math.round(canvasHeight * 0.018)}px "Plus Jakarta Sans", sans-serif`;
       ctx.fillStyle = isHostA ? '#93c5fd' : '#fcd34d';
-      ctx.fillText(`[${speakerName} • ${emotion}]`, canvasWidth * 0.06, barY + canvasHeight * 0.035);
+      ctx.fillText(`[${speakerName} • ${emotion}]`, x + 16, barY + canvasHeight * 0.035);
 
       // Texto subtítulo
       ctx.font = `500 ${textSize}px "Plus Jakarta Sans", sans-serif`;
       ctx.fillStyle = '#f8fafc';
-      const lines = this.wrapText(text, canvasWidth > canvasHeight ? 70 : 36);
+      const lines = this.wrapText(text, fitChars(canvasWidth > canvasHeight ? 70 : 36));
       let lineY = barY + canvasHeight * 0.075;
       for (const line of lines.slice(0, 3)) {
-        ctx.fillText(line, canvasWidth * 0.06, lineY);
+        ctx.fillText(line, x + 16, lineY);
         lineY += textSize * 1.35;
       }
     } else {
@@ -1441,7 +1434,7 @@ export class VideoRenderer {
       ctx.font = `500 ${textSize}px "Plus Jakarta Sans", sans-serif`;
       ctx.textBaseline = 'top';
 
-      const lines = this.wrapText(text, canvasWidth > canvasHeight ? 68 : 34);
+      const lines = this.wrapText(text, fitChars(canvasWidth > canvasHeight ? 68 : 34));
       let lineY = y + 66;
       for (let i = 0; i < Math.min(lines.length, 4); i++) {
         ctx.fillText(lines[i], x + 24, lineY);
