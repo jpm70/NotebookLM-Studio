@@ -1,135 +1,162 @@
-import { DialogueTurn, HostConfig, PodcastScript } from '../types';
+import { DialogueTurn, HostConfig, PodcastScript, SlideTableData, SlideTerminalData } from '../types';
 import { GenerateOptions, generateContent, parseJsonResponse, responseText } from './gemini';
-import {
-  isHtmlArticle,
-  parseTechnicalArticleHtml,
-  buildScriptFromParsedArticle,
-} from './articleParser';
+import { isHtmlArticle, parseTechnicalArticleHtml } from './articleParser';
 
 const MAX_SOURCE_CHARS = 60000;
 
-/** Quita estilos en línea y comentarios del HTML para no gastar tokens en CSS. */
-function compactSource(sourceText: string): string {
-  if (!isHtmlArticle(sourceText)) return sourceText.substring(0, MAX_SOURCE_CHARS);
-  const compact = sourceText
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/\s(?:style|class|width|height|align|valign|cellpadding|cellspacing|border)="[^"]*"/gi, '')
-    .replace(/\s{2,}/g, ' ');
-  return compact.substring(0, MAX_SOURCE_CHARS);
+interface PreparedSource {
+  /** Texto limpio para el prompt, con tablas y comandos sustituidos por marcas [TABLA n] / [TERMINAL n]. */
+  text: string;
+  tables: SlideTableData[];
+  terminals: SlideTerminalData[];
+  points: number;
+}
+
+/**
+ * Prepara el artículo para Gemini. Las tablas y bloques de comandos NO se le envían para que los
+ * copie (al copiarlos entraba en bucles de repetición y tardaba minutos): se sustituyen por marcas
+ * numeradas y la app pone después los datos exactos que extrae el parser.
+ */
+function prepareSource(sourceText: string): PreparedSource {
+  if (!isHtmlArticle(sourceText) || typeof DOMParser === 'undefined') {
+    return { text: sourceText.substring(0, MAX_SOURCE_CHARS), tables: [], terminals: [], points: 0 };
+  }
+  const parsed = parseTechnicalArticleHtml(sourceText);
+  const tables = parsed.sections.flatMap((sec) => sec.tables);
+  const terminals = parsed.sections.flatMap((sec) => sec.terminals);
+
+  const doc = new DOMParser().parseFromString(sourceText, 'text/html');
+  doc.querySelectorAll('script, style, noscript').forEach((el) => el.remove());
+  doc.querySelectorAll('table').forEach((tbl, i) => {
+    const heads = Array.from(tbl.querySelectorAll('th'))
+      .map((th) => th.textContent?.trim() || '')
+      .filter(Boolean)
+      .slice(0, 6);
+    tbl.replaceWith(doc.createTextNode(`\n[TABLA ${i + 1}${heads.length ? `: columnas ${heads.join(', ')}` : ''}]\n`));
+  });
+  doc.querySelectorAll('pre').forEach((pre, i) => {
+    const first = (pre.textContent || '')
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l && !l.startsWith('#')) || '';
+    pre.replaceWith(doc.createTextNode(`\n[TERMINAL ${i + 1}: ${first.slice(0, 80)}]\n`));
+  });
+  doc.querySelectorAll('h1, h2, h3').forEach((h) => h.prepend(doc.createTextNode('\n## ')));
+  doc.querySelectorAll('li').forEach((li) => li.prepend(doc.createTextNode('\n- ')));
+  doc.querySelectorAll('p, div, h1, h2, h3, ul, ol').forEach((el) => el.append(doc.createTextNode('\n')));
+
+  const text = (doc.body.textContent || '')
+    .replace(/[ \t ]{2,}/g, ' ')
+    .replace(/\n\s*\n+/g, '\n')
+    .trim()
+    .substring(0, MAX_SOURCE_CHARS);
+  const points = parsed.sections.filter((sec) => sec.number).length || parsed.sections.length;
+  return { text, tables, terminals, points };
 }
 
 const SCRIPT_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    episode_title: { type: 'STRING', description: 'Título atractivo del episodio estilo podcast de YouTube' },
-    episode_summary: { type: 'STRING', description: 'Resumen conciso del episodio en 2-3 frases' },
+    episode_title: { type: 'STRING' },
+    episode_summary: { type: 'STRING' },
     turns: {
       type: 'ARRAY',
       items: {
         type: 'OBJECT',
         properties: {
           speaker: { type: 'STRING', enum: ['Host_A', 'Host_B'] },
-          emotion: { type: 'STRING' },
           text: { type: 'STRING' },
-          visual_title: { type: 'STRING' },
-          visual_prompt: { type: 'STRING' },
-          slideType: { type: 'STRING', enum: ['table', 'terminal', 'context_anime', 'standard'] },
-          relevantText: { type: 'STRING' },
+          emotion: { type: 'STRING', enum: ['curioso', 'entusiasta', 'analítico', 'sorprendido', 'reflexivo', 'divertido'] },
           sectionTitle: { type: 'STRING' },
-          tableData: {
-            type: 'OBJECT',
-            properties: {
-              headers: { type: 'ARRAY', items: { type: 'STRING' } },
-              rows: { type: 'ARRAY', items: { type: 'ARRAY', items: { type: 'STRING' } } },
-            },
-          },
-          terminalData: {
-            type: 'OBJECT',
-            properties: {
-              command: { type: 'STRING' },
-              lines: { type: 'ARRAY', items: { type: 'STRING' } },
-              title: { type: 'STRING' },
-            },
-          },
+          visual_title: { type: 'STRING' },
+          slideType: { type: 'STRING', enum: ['context_anime', 'table', 'terminal'] },
+          tableNumber: { type: 'INTEGER' },
+          terminalNumber: { type: 'INTEGER' },
+          relevantText: { type: 'STRING' },
+          visual_prompt: { type: 'STRING' },
         },
-        required: ['speaker', 'emotion', 'text', 'visual_title', 'visual_prompt'],
+        required: ['speaker', 'text', 'emotion', 'sectionTitle', 'visual_title', 'slideType', 'relevantText', 'visual_prompt'],
+        propertyOrdering: [
+          'speaker',
+          'text',
+          'emotion',
+          'sectionTitle',
+          'visual_title',
+          'slideType',
+          'tableNumber',
+          'terminalNumber',
+          'relevantText',
+          'visual_prompt',
+        ],
       },
     },
   },
   required: ['episode_title', 'episode_summary', 'turns'],
+  propertyOrdering: ['episode_title', 'episode_summary', 'turns'],
 };
+
+/** Variante del idioma con instrucciones concretas (el acento de las voces sigue al texto). */
+function languageInstruction(language: string): string {
+  if (/latino/i.test(language)) return 'español latinoamericano neutro';
+  if (/^espa/i.test(language)) {
+    return 'español de España (castellano peninsular): usa "vosotros", vocabulario y expresiones de España, y evita latinoamericanismos';
+  }
+  return language;
+}
 
 function buildSystemInstruction(
   hostA: HostConfig,
   hostB: HostConfig,
   tone: string,
   language: string,
-  targetTurns: number,
-  visualStyle: string
+  turnRange: [number, number],
+  visualStyle: string,
+  source: PreparedSource
 ): string {
-  return `Eres un productor y guionista de podcast de primer nivel, especializado en el formato conversacional de "NotebookLM Audio Overview".
-Transforma el material fuente en un diálogo natural, fluido y riguroso entre dos locutores:
+  const [minTurns, maxTurns] = turnRange;
+  const markers =
+    source.tables.length || source.terminals.length
+      ? `\n- El material tiene ${source.tables.length} tablas marcadas [TABLA n] y ${source.terminals.length} bloques de comandos marcados [TERMINAL n]. Cada uno va en su propia diapositiva: slideType "table" con tableNumber n, o slideType "terminal" con terminalNumber n. NO copies su contenido: la app lo añade.`
+      : '';
+  return `Eres un guionista de podcast de primer nivel, especializado en el formato conversacional de "NotebookLM Audio Overview".
+Convierte el material fuente en un diálogo natural, fluido y riguroso entre dos locutores:
 - Host_A (${hostA.name}): ${hostA.role}. Estilo: ${hostA.tone}.
 - Host_B (${hostB.name}): ${hostB.role}. Estilo: ${hostB.tone}.
 
 Directrices:
-1. Idioma: ${language}. Tono: ${tone}.
-2. Genera aproximadamente ${targetTurns} turnos bien desarrollados (no menos de 8).
-3. Ritmo natural: interjecciones conversacionales ("Exacto", "Espera un segundo", "Mira esto"), analogías cotidianas y preguntas incisivas. Sin inventar datos que no estén en la fuente.
-4. Emoción por turno: "curioso", "entusiasta", "analítico", "sorprendido", "reflexivo" o "divertido".
-5. visual_title: título en pantalla de 5-7 palabras como máximo.
-6. visual_prompt: descripción EN INGLÉS de una ilustración de fondo para ese momento, con estilo "${visualStyle}". Describe sujetos, entorno, composición e iluminación concretos del tema tratado (no genéricos). La imagen NO debe contener texto, letras, logotipos ni interfaces legibles.
-
-REGLAS PARA ARTÍCULOS TÉCNICOS CON PUNTOS, TABLAS Y COMANDOS:
-- Genera al menos una diapositiva por cada punto o sección del artículo, en el mismo orden.
-- Cada TABLA va a una diapositiva independiente (slideType "table") con 'tableData' copiando headers y rows exactos.
-- Cada bloque de COMANDOS (<pre>) va a una diapositiva independiente (slideType "terminal") con 'terminalData' (comando y líneas exactas).
-- El resto de diapositivas son slideType "context_anime".
-- Rellena siempre 'sectionTitle' con el título del punto del artículo y 'relevantText' con 2-4 ideas clave de esa parte para mostrarlas en pantalla.`;
+- Idioma: ${languageInstruction(language)}. Tono: ${tone}.
+- Genera entre ${minTurns} y ${maxTurns} turnos, al menos uno por cada punto (##) del material y en el mismo orden. Cada intervención de 40 a 90 palabras, conversacional, sin inventar datos que no estén en la fuente.
+- sectionTitle: el título del punto del material al que corresponde el turno.
+- visual_title: título en pantalla de 7 palabras como máximo.
+- relevantText: 2-4 ideas clave breves de esa parte, separadas por punto y coma (máximo 200 caracteres en total).
+- visual_prompt: UNA frase en inglés (máximo 30 palabras) que describa una ilustración de fondo concreta para ese momento, con estilo "${visualStyle}". Sin texto, letras, logotipos ni interfaces legibles en la imagen.${markers}
+- El resto de diapositivas son slideType "context_anime".`;
 }
 
-/** Copia tablas, terminales y textos del parser local a los turnos que Gemini dejó sin ellos. */
-function enrichWithParsedArticle(script: PodcastScript, sourceText: string, hostA: HostConfig, hostB: HostConfig) {
-  if (!isHtmlArticle(sourceText)) return;
-  const parsed = parseTechnicalArticleHtml(sourceText);
-  if (parsed.sections.length === 0) return;
-
-  const local = buildScriptFromParsedArticle(parsed, hostA.name, hostB.name);
-  const hasTables = script.turns.some((t) => t.tableData || t.slideType === 'table');
-  const hasTerminals = script.turns.some((t) => t.terminalData || t.slideType === 'terminal');
-
-  local.turns.forEach((lTurn, idx) => {
-    const target = script.turns[idx];
-    if (!target) return;
-    if (lTurn.tableData && !hasTables && !target.tableData) {
-      target.tableData = lTurn.tableData;
-      target.slideType = 'table';
-    }
-    if (lTurn.terminalData && !hasTerminals && !target.terminalData) {
-      target.terminalData = lTurn.terminalData;
-      target.slideType = 'terminal';
-    }
-    if (lTurn.relevantText && !target.relevantText) target.relevantText = lTurn.relevantText;
-    if (lTurn.sectionTitle && !target.sectionTitle) target.sectionTitle = lTurn.sectionTitle;
-  });
-}
-
-/** Normaliza lo que devuelve el modelo para que el renderizador no reciba estructuras vacías. */
-function sanitizeTurns(turns: DialogueTurn[]): DialogueTurn[] {
+/** Recorta campos desbocados (bucles de repetición del modelo) y pone los datos exactos de tablas y terminales. */
+function finalizeTurns(turns: any[], source: PreparedSource): DialogueTurn[] {
+  const clip = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
   return turns
     .filter((t) => t && typeof t.text === 'string' && t.text.trim())
     .map((t) => {
-      const turn: DialogueTurn = { ...t, speaker: t.speaker === 'Host_B' ? 'Host_B' : 'Host_A' };
-      if (turn.tableData && (!Array.isArray(turn.tableData.headers) || !turn.tableData.headers.length || !Array.isArray(turn.tableData.rows))) {
-        delete turn.tableData;
-        if (turn.slideType === 'table') turn.slideType = 'context_anime';
-      }
-      if (turn.terminalData && !Array.isArray(turn.terminalData.lines)) {
-        turn.terminalData = { ...turn.terminalData, lines: [] };
-      }
-      if (turn.terminalData && !turn.terminalData.command && turn.terminalData.lines.length === 0) {
-        delete turn.terminalData;
-        if (turn.slideType === 'terminal') turn.slideType = 'context_anime';
+      const turn: DialogueTurn = {
+        speaker: t.speaker === 'Host_B' ? 'Host_B' : 'Host_A',
+        text: clip(t.text, 1500),
+        emotion: clip(t.emotion, 30) || 'reflexivo',
+        visual_title: clip(t.visual_title, 90),
+        visual_prompt: clip(t.visual_prompt, 400),
+        sectionTitle: clip(t.sectionTitle, 120) || undefined,
+        relevantText: clip(t.relevantText, 400) || undefined,
+        slideType: 'context_anime',
+      };
+      const tableIdx = Number(t.tableNumber) - 1;
+      const termIdx = Number(t.terminalNumber) - 1;
+      if (t.slideType === 'table' && source.tables[tableIdx]) {
+        turn.slideType = 'table';
+        turn.tableData = source.tables[tableIdx];
+      } else if (t.slideType === 'terminal' && source.terminals[termIdx]) {
+        turn.slideType = 'terminal';
+        turn.terminalData = source.terminals[termIdx];
       }
       return turn;
     });
@@ -146,24 +173,21 @@ export async function generateScriptWithGemini(
   visualStyle: string = 'anime',
   options: Pick<GenerateOptions, 'onStatus' | 'signal'> = {}
 ): Promise<PodcastScript> {
+  const source = prepareSource(sourceText);
+  // Dos turnos por punto del artículo (pregunta y respuesta), con un mínimo razonable
+  const minTurns = Math.max(10, source.points * 2, Math.min(targetTurns, 30));
+  const turnRange: [number, number] = [minTurns, minTurns + 6];
+
   const { data } = await generateContent(
     'text',
     {
       systemInstruction: {
-        parts: [{ text: buildSystemInstruction(hostA, hostB, tone, language, targetTurns, visualStyle) }],
+        parts: [{ text: buildSystemInstruction(hostA, hostB, tone, language, turnRange, visualStyle, source) }],
       },
-      contents: [
-        {
-          parts: [
-            {
-              text: `Analiza el siguiente material fuente y genera el guion completo cumpliendo el esquema JSON, con diapositivas independientes para cada tabla y terminal.\n\n--- MATERIAL FUENTE ---\n${compactSource(sourceText)}\n--- FIN DEL MATERIAL ---`,
-            },
-          ],
-        },
-      ],
+      contents: [{ parts: [{ text: `MATERIAL FUENTE:\n${source.text}` }] }],
       generationConfig: {
         temperature: 0.7,
-        maxOutputTokens: 32768,
+        maxOutputTokens: 16384,
         responseMimeType: 'application/json',
         responseSchema: SCRIPT_SCHEMA,
       },
@@ -172,13 +196,15 @@ export async function generateScriptWithGemini(
   );
   options.onStatus?.('Montando las diapositivas…');
 
-  const script = parseJsonResponse<PodcastScript>(data);
-  if (!Array.isArray(script.turns) || script.turns.length === 0) {
+  const raw = parseJsonResponse<any>(data);
+  if (!Array.isArray(raw.turns) || raw.turns.length === 0) {
     throw new Error('Gemini devolvió un guion sin turnos de diálogo.');
   }
-  script.turns = sanitizeTurns(script.turns);
-  enrichWithParsedArticle(script, sourceText, hostA, hostB);
-  return script;
+  return {
+    episode_title: String(raw.episode_title || '').slice(0, 150),
+    episode_summary: String(raw.episode_summary || '').slice(0, 600),
+    turns: finalizeTurns(raw.turns, source),
+  };
 }
 
 /** Extrae el contenido de una imagen (infografía, captura, diagrama) para usarlo como fuente. */

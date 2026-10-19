@@ -1261,6 +1261,25 @@ export class VideoRenderer {
     const textSize = Math.round(canvasHeight * fontScale);
     // Caracteres por línea limitados por el ancho de la tarjeta (los avatares ocupan los laterales)
     const fitChars = (base: number) => Math.min(base, Math.max(16, Math.floor((width - 32) / (textSize * 0.56))));
+    // Paginación: en vez de cortar en las primeras líneas, mostrar el bloque que se está diciendo ahora
+    const totalWords = Math.max(1, text.trim().split(/\s+/).length);
+    const pageOf = (all: string[], pageSize: number) => {
+      const spokenWord = Math.min(totalWords - 1, Math.floor(turnProgress * totalWords));
+      let acc = 0;
+      let lineOfWord = 0;
+      for (let i = 0; i < all.length; i++) {
+        const n = all[i].split(/\s+/).length;
+        if (spokenWord < acc + n) {
+          lineOfWord = i;
+          break;
+        }
+        acc += n;
+        lineOfWord = i;
+      }
+      const start = Math.floor(lineOfWord / pageSize) * pageSize;
+      const wordsBefore = all.slice(0, start).reduce((sum, l) => sum + l.split(/\s+/).length, 0);
+      return { visible: all.slice(start, start + pageSize), wordsBefore };
+    };
 
     if (styleKey === 'karaoke') {
       // Estilo Karaoke Viral (TikTok / Shorts / Reels): Resaltado palabra por palabra
@@ -1294,9 +1313,10 @@ export class VideoRenderer {
 
       const lines = this.wrapText(text, fitChars(canvasWidth > canvasHeight ? 52 : 26));
       const startY = y + 90;
-      let globalWordIdx = 0;
+      const page = pageOf(lines, 3);
+      let globalWordIdx = page.wordsBefore;
 
-      lines.slice(0, 4).forEach((line, lineIdx) => {
+      page.visible.forEach((line, lineIdx) => {
         const lineWords = line.split(/\s+/);
         const lineY = startY + lineIdx * (textSize * 1.45);
 
@@ -1354,7 +1374,7 @@ export class VideoRenderer {
 
       const lines = this.wrapText(text, fitChars(canvasWidth > canvasHeight ? 56 : 28));
       let lineY = y + 75;
-      for (const line of lines.slice(0, 3)) {
+      for (const line of pageOf(lines, 3).visible) {
         ctx.strokeText(line, canvasWidth / 2, lineY);
         ctx.fillText(line, canvasWidth / 2, lineY);
         lineY += textSize * 1.5;
@@ -1378,7 +1398,7 @@ export class VideoRenderer {
 
       const lines = this.wrapText(text, fitChars(canvasWidth > canvasHeight ? 56 : 30));
       let lineY = y + height - 40 - (lines.length - 1) * (textSize * 1.3);
-      for (const line of lines.slice(0, 3)) {
+      for (const line of pageOf(lines, 3).visible) {
         ctx.strokeText(line, canvasWidth / 2, lineY);
         ctx.fillText(line, canvasWidth / 2, lineY);
         lineY += textSize * 1.3;
@@ -1404,7 +1424,7 @@ export class VideoRenderer {
       ctx.fillStyle = '#f8fafc';
       const lines = this.wrapText(text, fitChars(canvasWidth > canvasHeight ? 70 : 36));
       let lineY = barY + canvasHeight * 0.075;
-      for (const line of lines.slice(0, 3)) {
+      for (const line of pageOf(lines, 3).visible) {
         ctx.fillText(line, x + 16, lineY);
         lineY += textSize * 1.35;
       }
@@ -1436,8 +1456,9 @@ export class VideoRenderer {
 
       const lines = this.wrapText(text, fitChars(canvasWidth > canvasHeight ? 68 : 34));
       let lineY = y + 66;
-      for (let i = 0; i < Math.min(lines.length, 4); i++) {
-        ctx.fillText(lines[i], x + 24, lineY);
+      const visible = pageOf(lines, 3).visible;
+      for (let i = 0; i < visible.length; i++) {
+        ctx.fillText(visible[i], x + 24, lineY);
         lineY += textSize * 1.4;
       }
     }
@@ -1713,7 +1734,12 @@ export class VideoRenderer {
     ctx.save();
 
     const termW = isVertical ? w * 0.92 : w * 0.76;
-    const termH = isVertical ? h * 0.34 : h * 0.40;
+    // Alto ajustado a las líneas reales (antes era fijo y dejaba media ventana vacía tapando el fondo)
+    const fontSize = Math.max(12, Math.round(h * (isVertical ? 0.016 : 0.019)));
+    const lineStep = fontSize * 1.6;
+    const maxLines = isVertical ? 9 : 11;
+    const shownLines = Math.min(term.lines.length, maxLines);
+    const termH = Math.min(isVertical ? h * 0.46 : h * 0.5, 38 + 26 + (shownLines + 1) * lineStep);
     const termX = (w - termW) / 2;
     const termY = isVertical ? h * 0.17 : h * 0.19;
 
@@ -1794,12 +1820,9 @@ export class VideoRenderer {
 
     // Contenido de la consola con resalto de sintaxis de comandos
     ctx.textAlign = 'left';
-    const fontSize = Math.max(12, Math.round(h * 0.0165));
     ctx.font = `600 ${fontSize}px "Fira Code", "Courier New", Consolas, monospace`;
-
     const contentPadX = termX + 24;
-    let lineY = termY + titleBarH + 28;
-    const maxLines = isVertical ? 6 : 7;
+    let lineY = termY + titleBarH + 26;
     const linesToDraw = term.lines.slice(0, maxLines);
 
     // Listado de comandos comunes para colorear verbos
@@ -1865,7 +1888,7 @@ export class VideoRenderer {
         }
       }
 
-      lineY += fontSize * 1.65;
+      lineY += lineStep;
     });
 
     // Cursor parpadeante estilo bloque terminal
@@ -1896,7 +1919,12 @@ export class VideoRenderer {
     ctx.save();
 
     const tblW = isVertical ? w * 0.94 : w * 0.82;
-    const tblH = isVertical ? h * 0.35 : h * 0.40;
+    // Alto ajustado a las filas reales (antes el 40 % de la pantalla se repartía entre 2-3 filas)
+    const maxRows = Math.min(tbl.rows.length, isVertical ? 5 : 6);
+    const fontSize = Math.max(12, Math.round(h * (isVertical ? 0.0145 : 0.017)));
+    const headerH = Math.round(Math.max(40, h * 0.065));
+    const rowH = Math.round(fontSize * 3.2);
+    const tblH = headerH + Math.max(1, maxRows) * rowH;
     const tblX = (w - tblW) / 2;
     const tblY = isVertical ? h * 0.17 : h * 0.19;
 
@@ -1931,7 +1959,6 @@ export class VideoRenderer {
     const colWidths = weights.map((wt) => (wt / totalWeight) * tblW);
 
     // Cabecera de la tabla con gradiente y separadores
-    const headerH = Math.round(tblH * 0.22);
     const headGrad = ctx.createLinearGradient(tblX, tblY, tblX, tblY + headerH);
     headGrad.addColorStop(0, '#1e293b');
     headGrad.addColorStop(1, '#0f172a');
@@ -1975,9 +2002,6 @@ export class VideoRenderer {
     });
 
     // Filas autoadaptables con efecto cebra y detección inteligente de etiquetas (pills)
-    const maxRows = Math.min(tbl.rows.length, isVertical ? 4 : 5);
-    const rowH = (tblH - headerH) / Math.max(1, maxRows);
-    const fontSize = Math.max(11, Math.round(h * 0.0145));
     ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
 
     for (let rIdx = 0; rIdx < maxRows; rIdx++) {
@@ -2098,47 +2122,85 @@ export class VideoRenderer {
     const { ctx } = this;
     ctx.save();
 
-    const cardW = isVertical ? w * 0.88 : w * 0.74;
-    const cardH = isVertical ? h * 0.32 : h * 0.38;
-    const cardX = (w - cardW) / 2;
-    const cardY = isVertical ? h * 0.18 : h * 0.20;
+    // Ideas clave como viñetas (Gemini las separa con punto y coma; el parser, con saltos de línea)
+    const items = relevantText
+      .split(/\n|;|\s•\s/)
+      .map((t) => t.replace(/^[•\-–\s]+/, '').trim())
+      .map((t) => t.charAt(0).toUpperCase() + t.slice(1))
+      .filter((t) => t.length > 1)
+      .slice(0, 5);
+    if (!items.length) {
+      ctx.restore();
+      return;
+    }
 
-    // Cristal escarchado oscuro
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-    ctx.shadowBlur = 24;
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+    const cardW = isVertical ? w * 0.88 : w * 0.62;
+    const cardX = (w - cardW) / 2;
+    const cardY = isVertical ? h * 0.18 : h * 0.2;
+    const padX = Math.round(h * 0.03);
+    const titleSize = Math.max(12, Math.round(h * 0.019));
+    const fontSize = Math.max(13, Math.round(h * (isVertical ? 0.019 : 0.024)));
+    const lineStep = fontSize * 1.4;
+    const textW = cardW - padX * 2 - fontSize * 1.2;
+
+    // Partir cada viñeta en líneas según el ancho real
+    ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
+    const wrapped: string[][] = items.map((item) => {
+      const words = item.split(/\s+/);
+      const lines: string[] = [];
+      let line = '';
+      for (const word of words) {
+        const probe = line ? `${line} ${word}` : word;
+        if (ctx.measureText(probe).width > textW && line) {
+          lines.push(line);
+          line = word;
+        } else {
+          line = probe;
+        }
+      }
+      if (line) lines.push(line);
+      return lines.slice(0, 3);
+    });
+    const totalLines = wrapped.reduce((n, l) => n + l.length, 0);
+    const itemGap = fontSize * 0.55;
+    const cardH = padX * 0.9 + titleSize * 1.9 + totalLines * lineStep + (wrapped.length - 1) * itemGap + padX * 0.6;
+
+    // Cristal oscuro semitransparente: deja intuir la ilustración alrededor
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = 'rgba(10, 15, 30, 0.72)';
     ctx.strokeStyle = 'rgba(244, 114, 182, 0.45)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.roundRect(cardX, cardY, cardW, cardH, 14);
     ctx.fill();
     ctx.stroke();
+    ctx.shadowBlur = 0;
 
-    // Título de la tarjeta
+    // Título del punto
     ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = '#f472b6';
-    ctx.font = `800 ${Math.round(h * 0.017)}px "Plus Jakarta Sans", sans-serif`;
-    ctx.fillText(`📌 ${sectionTitle.toUpperCase()}`, cardX + 22, cardY + 30);
+    ctx.font = `800 ${titleSize}px "Plus Jakarta Sans", sans-serif`;
+    let title = `📌 ${sectionTitle.toUpperCase()}`;
+    while (title.length > 6 && ctx.measureText(title).width > cardW - padX * 2) title = title.slice(0, -2) + '…';
+    title = title.replace(/…+$/, '…');
+    let y = cardY + padX * 0.9 + titleSize;
+    ctx.fillText(title, cardX + padX, y);
+    y += titleSize * 0.9 + lineStep * 0.75;
 
-    // Líneas o bullets
-    const lines = relevantText.split('\n');
-    let lineY = cardY + 58;
-    const maxLines = isVertical ? 5 : 6;
-    const fontSize = Math.max(11, Math.round(h * 0.015));
-    ctx.font = `500 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
-    ctx.fillStyle = '#f1f5f9';
-
-    for (const line of lines.slice(0, maxLines)) {
-      if (line.trim().startsWith('•')) {
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillText('•', cardX + 22, lineY);
-        ctx.fillStyle = '#f1f5f9';
-        ctx.fillText(line.replace(/^•\s*/, ''), cardX + 36, lineY);
-      } else {
-        ctx.fillText(line, cardX + 22, lineY);
-      }
-      lineY += fontSize * 1.65;
-    }
+    // Viñetas
+    ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
+    wrapped.forEach((lines) => {
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillText('•', cardX + padX, y);
+      ctx.fillStyle = '#f1f5f9';
+      lines.forEach((line) => {
+        ctx.fillText(line, cardX + padX + fontSize * 1.1, y);
+        y += lineStep;
+      });
+      y += itemGap;
+    });
 
     ctx.restore();
   }

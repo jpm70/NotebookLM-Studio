@@ -62,6 +62,7 @@ import {
 } from '../services/imageService';
 import { ManualBackgroundsPanel } from './ManualBackgroundsPanel';
 import { getSharedAudioContext } from '../services/sharedAudio';
+import fixWebmDuration from 'fix-webm-duration';
 import { YouTubeMetadataModal } from './YouTubeMetadataModal';
 import { ShortsClipModal } from './ShortsClipModal';
 import { VideoTimelineEditor } from './VideoTimelineEditor';
@@ -810,12 +811,21 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
       if (e.data.size > 0) chunks.push(e.data);
     };
 
-    recorder.onstop = () => {
+    recorder.onstop = async () => {
       if (!exportCancelRef.current && chunks.length > 0) {
-        const blob = new Blob(chunks, { type: mimeType });
-        const videoUrl = URL.createObjectURL(blob);
-        setExportedVideoExt(mimeType.includes('mp4') ? 'mp4' : 'webm');
-        setExportedVideoUrl(videoUrl);
+        let blob = new Blob(chunks, { type: mimeType });
+        const isMp4 = mimeType.includes('mp4');
+        if (!isMp4) {
+          // MediaRecorder (Firefox) no escribe la duración en el WebM: sin ella no se puede avanzar en el vídeo
+          setExportStageDescription('Escribiendo la duración en el vídeo WebM...');
+          try {
+            blob = await fixWebmDuration(blob, performance.now() - recordStartedAt, { logger: false });
+          } catch (err) {
+            console.warn('No se pudo escribir la duración del WebM:', err);
+          }
+        }
+        setExportedVideoExt(isMp4 ? 'mp4' : 'webm');
+        setExportedVideoUrl(URL.createObjectURL(blob));
       }
       setIsExporting(false);
       setExportProgress(100);
@@ -823,6 +833,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
       releaseAudio();
     };
 
+    const recordStartedAt = performance.now();
     recorder.start(100);
 
     // FASE 2: CÁLCULO DE CRONOGRAMA REAL BASADO EN LA DURACIÓN DE LAS VOCES
@@ -2734,6 +2745,12 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                   <Download className="w-4 h-4" />
                   Descargar Vídeo Completo (.{exportedVideoExt})
                 </a>
+                {exportedVideoExt === 'webm' && (
+                  <p className="text-[10px] text-slate-400 leading-snug">
+                    Tu navegador graba en WebM (Firefox no sabe grabar MP4). YouTube acepta WebM sin problema; si
+                    necesitas MP4, graba desde Chrome o Edge.
+                  </p>
+                )}
               </div>
             )}
           </div>

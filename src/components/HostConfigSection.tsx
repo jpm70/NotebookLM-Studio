@@ -803,7 +803,8 @@ export const HostConfigSection: React.FC<HostConfigSectionProps> = ({
               onChange={(e) => setSettings((s) => ({ ...s, language: e.target.value }))}
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
             >
-              <option value="Español">Español (Castellano/Latino)</option>
+              <option value="Español de España">Español de España (castellano)</option>
+              <option value="Español latinoamericano">Español latinoamericano</option>
               <option value="English">English (Conversational)</option>
               <option value="Português">Português</option>
               <option value="Français">Français</option>
