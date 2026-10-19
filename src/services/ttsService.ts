@@ -93,8 +93,12 @@ class AudioTTSService {
   }
 
   public findBestBrowserVoice(gender: 'male' | 'female', language: string = 'es', preferredUri?: string): SpeechSynthesisVoice | null {
-    const list = this.getAvailableBrowserVoices(language.substring(0, 2));
-    if (!list.length) return null;
+    const all = this.getAvailableBrowserVoices(language.substring(0, 2));
+    if (!all.length) return null;
+    // Castellano de España por defecto: se prefieren las voces es-ES (o las latinas si se eligió esa variante)
+    const wantsLatam = /latino/i.test(language);
+    const regional = all.filter((v) => (wantsLatam ? /es[-_](?!ES)/i.test(v.lang) : /es[-_]ES/i.test(v.lang)));
+    const list = regional.length ? regional : all;
 
     if (preferredUri) {
       const match = list.find(

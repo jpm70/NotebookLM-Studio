@@ -15,8 +15,8 @@ const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 export type ModelKind = 'text' | 'tts' | 'image';
 
 const PREFERRED_MODELS: Record<ModelKind, string[]> = {
-  text: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash'],
-  tts: ['gemini-3.8-flash-lite-tts', 'gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'],
+  text: ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-flash-latest', 'gemini-2.5-flash'],
+  tts: ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts', 'gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts'],
   image: ['gemini-2.5-flash-image', 'gemini-2.5-flash-image-preview'],
 };
 
@@ -164,7 +164,7 @@ export async function generateContent(
   body: Record<string, unknown>,
   options: GenerateOptions = {}
 ): Promise<{ data: any; model: string }> {
-  const { onStatus, signal, timeoutMs = 180000, fastThinking = false } = options;
+  const { onStatus, signal, timeoutMs = 120000, fastThinking = false } = options;
   const key = requireKey(options.apiKey);
   const candidates = (await candidatesFor(kind, key)).slice(0, MAX_MODELS[kind]);
   if (candidates.length === 0) {
@@ -277,10 +277,17 @@ export async function generateContent(
         break;
       }
 
-      if (res.status >= 500 && attempt < 2) {
+      // Saturación ("high demand"): un reintento rápido y, si sigue, otro modelo en vez de insistir
+      if (res.status >= 500 && attempt < 1) {
         onStatus?.(`${model} está saturado (HTTP ${res.status}); reintentando…`);
-        await sleep(3000 * (attempt + 1));
+        await sleep(2500);
         continue;
+      }
+      if (res.status >= 500) {
+        onStatus?.(`${model} sigue saturado; probando otro modelo…`);
+        lastError = new GeminiError(`${model} está saturado ahora mismo (HTTP ${res.status}). Inténtalo en unos minutos.`, res.status);
+        if (resolvedModels[kind] === model) delete resolvedModels[kind];
+        break;
       }
 
       // 404 (modelo inexistente), 400 de modalidad no soportada, etc. → siguiente candidato

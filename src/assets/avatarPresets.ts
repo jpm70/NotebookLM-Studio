@@ -18,6 +18,25 @@ const createSvgDataUrl = (svgContent: string): string => {
 };
 
 export const AVATAR_PRESETS: AvatarPreset[] = [
+  // --- 0. LOCUTORES DE LA CASA (Un Fantasma en el Sistema) ---
+  {
+    id: 'alice-fantasma',
+    name: 'Alice (Un Fantasma en el Sistema)',
+    category: 'anime',
+    gender: 'female',
+    icon: '👩‍💻',
+    description: 'Analista con capucha y gafas HUD. Locutora por defecto de los vídeos de la casa.',
+    svgDataUrl: `${import.meta.env.BASE_URL}avatars/alice.jpg`,
+  },
+  {
+    id: 'bob-fantasma',
+    name: 'Bob (Un Fantasma en el Sistema)',
+    category: 'anime',
+    gender: 'male',
+    icon: '🧑‍💻',
+    description: 'Hacker con capucha y visor neón. Locutor por defecto de los vídeos de la casa.',
+    svgDataUrl: `${import.meta.env.BASE_URL}avatars/bob.jpg`,
+  },
   // --- 1. PODCAST & LOCUTORES PRO ---
   {
     id: 'alex-podcast-pro',
@@ -305,5 +324,5 @@ export const getAvatarPresetById = (id?: string): AvatarPreset | undefined => {
   return AVATAR_PRESETS.find((p) => p.id === id);
 };
 
-export const DEFAULT_HOST_A_AVATAR = AVATAR_PRESETS[0]; // Alex Pro
-export const DEFAULT_HOST_B_AVATAR = AVATAR_PRESETS[1]; // Sam Tech
+export const DEFAULT_HOST_A_AVATAR = AVATAR_PRESETS[0]; // Alice
+export const DEFAULT_HOST_B_AVATAR = AVATAR_PRESETS[1]; // Bob

@@ -30,13 +30,13 @@ import { SampleTopicItem } from './data/sampleTopicsData';
 import { browserTTS } from './services/ttsService';
 
 const INITIAL_HOST_A: HostConfig = {
-  name: 'Alex',
-  role: 'Explicador técnico y analítico',
-  tone: 'Estructurado, riguroso y pedagógico',
-  voiceGender: 'male',
-  neuralVoice: 'Puck', // Voz masculina oficial Gemini Studio HD
-  voiceRegister: 'Barítono Cálido (Medio-Grave)',
-  voiceAccent: 'Castellano / Internacional',
+  name: 'Alice',
+  role: 'Explicadora técnica y analítica',
+  tone: 'Estructurada, rigurosa y pedagógica',
+  voiceGender: 'female',
+  neuralVoice: 'Kore', // Voz femenina de Gemini TTS
+  voiceRegister: 'Mezzosoprano Conversacional (Cálida)',
+  voiceAccent: 'Castellano (España)',
   voicePitch: 1.0,
   voiceSpeed: 1.0,
   color: '#3b82f6',
@@ -46,13 +46,13 @@ const INITIAL_HOST_A: HostConfig = {
 };
 
 const INITIAL_HOST_B: HostConfig = {
-  name: 'Sam',
+  name: 'Bob',
   role: 'Curioso y cuestionador',
   tone: 'Espontáneo, incisivo y ameno',
-  voiceGender: 'female',
-  neuralVoice: 'Kore', // Voz femenina oficial Gemini Studio HD
-  voiceRegister: 'Mezzosoprano Conversacional (Cálida)',
-  voiceAccent: 'Castellano / Internacional',
+  voiceGender: 'male',
+  neuralVoice: 'Puck', // Voz masculina de Gemini TTS
+  voiceRegister: 'Barítono Cálido (Medio-Grave)',
+  voiceAccent: 'Castellano (España)',
   voicePitch: 1.0,
   voiceSpeed: 1.0,
   color: '#f59e0b',
@@ -65,7 +65,7 @@ const INITIAL_SETTINGS: StudioSettings = {
   aspectRatio: '16:9',
   resolution: '720p',
   fps: 24,
-  language: 'Español',
+  language: 'Español de España',
   tone: 'Divulgativo, entretenido y riguroso',
   targetTurns: 8,
   pauseBetweenSpeakers: 0.3,
@@ -109,7 +109,7 @@ const INITIAL_SETTINGS: StudioSettings = {
 
 const DEFAULT_SAMPLE_SCRIPT: PodcastScript = {
   episode_title: 'La Revolución de la IA Agéntica y Multimodal en 2026',
-  episode_summary: 'Alex y Sam analizan el salto de los modelos conversacionales a agentes multimodales con razonamiento en tiempo real, latencias bajo 200ms y los desafíos térmicos de los centros de datos.',
+  episode_summary: 'Alice y Bob analizan el salto de los modelos conversacionales a agentes multimodales con razonamiento en tiempo real, latencias bajo 200ms y los desafíos térmicos de los centros de datos.',
   turns: [
     {
       speaker: 'Host_A',
@@ -121,14 +121,14 @@ const DEFAULT_SAMPLE_SCRIPT: PodcastScript = {
     {
       speaker: 'Host_B',
       emotion: 'curioso',
-      text: 'Totalmente, Alex. Pero a ver, cuando hablamos de latencias inferiores a 200 milisegundos en voz y visión, ¿no estamos hablando básicamente de que el modelo piensa al mismo tiempo que te está escuchando?',
+      text: 'Totalmente, Alice. Pero a ver, cuando hablamos de latencias inferiores a 200 milisegundos en voz y visión, ¿no estamos hablando básicamente de que el modelo piensa al mismo tiempo que te está escuchando?',
       visual_title: 'Multimodalidad en Tiempo Real',
       visual_prompt: 'Split-screen waveform analysis showing instant sound to vector cognitive mapping',
     },
     {
       speaker: 'Host_A',
       emotion: 'analítico',
-      text: 'Exacto, Sam. Ya no existe ese molesto retardo de "transcribe a texto, genera respuesta y sintetiza voz". Es una arquitectura omnidireccional nativa. El sistema detecta tus micro-pausas y la inflexión de tu voz con una precisión casi humana.',
+      text: 'Exacto, Bob. Ya no existe ese molesto retardo de "transcribe a texto, genera respuesta y sintetiza voz". Es una arquitectura omnidireccional nativa. El sistema detecta tus micro-pausas y la inflexión de tu voz con una precisión casi humana.',
       visual_title: 'Arquitectura Omnidireccional',
       visual_prompt: 'High tech data center interior with liquid cooled compute nodes and indigo light reflections',
     },

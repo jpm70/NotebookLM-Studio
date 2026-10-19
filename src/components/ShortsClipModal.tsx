@@ -133,7 +133,7 @@ export const ShortsClipModal: React.FC<ShortsClipModalProps> = ({
     };
     animFrameRef.current = requestAnimationFrame(loop);
 
-    await browserTTS.playTurnBrowser(currentTurn, hostA, hostB, 'Español');
+    await browserTTS.playTurnBrowser(currentTurn, hostA, hostB, 'Español de España');
     setIsPlaying(false);
   };
 
