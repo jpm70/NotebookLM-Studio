@@ -1253,6 +1253,14 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
             setCurrentTurnIndex(idx);
             setIsPlayingPreview(true);
           }}
+          onPlaceBox={(idx) => {
+            setActiveStudioView('branding');
+            setIsPlayingPreview(false);
+            setPreviewStage('dialogue');
+            setCurrentTurnIndex(idx);
+            setEditBoxMode(true);
+            setTimeout(() => canvasWrapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 250);
+          }}
           onLaunchExport={() => handleExportVideo('full')}
           onLaunchPythonBundle={handleExportPythonBundle}
           onSwitchToBranding={() => setActiveStudioView('branding')}

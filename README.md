@@ -31,7 +31,7 @@ No hay servidor: todo se ejecuta en tu navegador con **tu propia clave de Gemini
    - **Gemini API:** con tu clave; la generación de imágenes por API exige activar la facturación en Google AI Studio.
 
    Si una imagen falla, esa diapositiva usa un fondo vectorial de reserva.
-   Las tarjetas, tablas y terminales se ajustan solas a su contenido. Si en alguna diapositiva tapan la parte importante de la ilustración, pulsa **Mover / redimensionar caja** bajo la vista previa: arrastra la caja, cambia su tamaño con el tirador de la esquina o usa **Izquierda / Centro / Derecha**. Se guarda por diapositiva y se usa al grabar; **Automático** vuelve a la colocación por defecto.
+   Las tarjetas, tablas y terminales se ajustan solas a su contenido. Si en alguna diapositiva tapan la parte importante de la ilustración, pulsa **Colocar caja** en esa diapositiva de la Galería (o **Mover / redimensionar caja** bajo la vista previa de «Ajustes & Portada»): arrastra la caja, cambia su tamaño con el tirador de la esquina o usa **Izquierda / Centro / Derecha**. Se guarda por diapositiva y se usa al grabar; **Automático** vuelve a la colocación por defecto.
 5. **Compilar Episodio Completo** → sintetiza las voces con Gemini TTS y graba el vídeo (logo, portada, post-intro, subtítulos, música con auto-ducking y cierre) en `.mp4` (o `.webm` si tu navegador no graba MP4).
 6. **Kit SEO** → títulos, descripción con capítulos (con los tiempos reales del vídeo exportado) y etiquetas para YouTube.
 
