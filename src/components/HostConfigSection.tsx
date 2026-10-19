@@ -456,9 +456,9 @@ export const HostConfigSection: React.FC<HostConfigSectionProps> = ({
                     <div>
                       <label className="text-[10px] text-slate-400 block mb-0.5">Modelo Rápido:</label>
                       <select
-                        value={hostA.voiceProfileId || (PREMIUM_VOICE_CATALOG.find(v => v.geminiVoiceId === hostA.neuralVoice && v.gender === 'male')?.id) || 'gemini-puck'}
+                        value={hostA.voiceProfileId || (PREMIUM_VOICE_CATALOG.find(v => v.geminiVoiceId === hostA.neuralVoice && v.gender === hostA.voiceGender)?.id) || (PREMIUM_VOICE_CATALOG.find(v => v.geminiVoiceId === hostA.neuralVoice)?.id) || (hostA.voiceGender === 'female' ? 'gemini-kore' : 'gemini-puck')}
                         onChange={(e) => {
-                          const prof = getVoiceProfileById(e.target.value) || getVoiceProfileByGeminiName(e.target.value, 'male');
+                          const prof = getVoiceProfileById(e.target.value) || getVoiceProfileByGeminiName(e.target.value, hostA.voiceGender);
                           setHostA((prev) => ({
                             ...prev,
                             voiceProfileId: prof.id,
@@ -475,10 +475,14 @@ export const HostConfigSection: React.FC<HostConfigSectionProps> = ({
                         }}
                         className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500 truncate"
                       >
-                        {PREMIUM_VOICE_CATALOG.filter((v) => v.gender === 'male').map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.flag} {v.name} ({v.vocalRegister.split(' ')[0]})
-                          </option>
+                        {(['female', 'male'] as const).map((g) => (
+                          <optgroup key={g} label={g === 'female' ? 'Voces femeninas' : 'Voces masculinas'}>
+                            {PREMIUM_VOICE_CATALOG.filter((v) => v.gender === g).map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.flag} {v.name} ({v.vocalRegister.split(' ')[0]})
+                              </option>
+                            ))}
+                          </optgroup>
                         ))}
                       </select>
                     </div>
@@ -704,9 +708,9 @@ export const HostConfigSection: React.FC<HostConfigSectionProps> = ({
                     <div>
                       <label className="text-[10px] text-slate-400 block mb-0.5">Modelo Rápido:</label>
                       <select
-                        value={hostB.voiceProfileId || (PREMIUM_VOICE_CATALOG.find(v => v.geminiVoiceId === hostB.neuralVoice && v.gender === 'female')?.id) || 'gemini-kore'}
+                        value={hostB.voiceProfileId || (PREMIUM_VOICE_CATALOG.find(v => v.geminiVoiceId === hostB.neuralVoice && v.gender === hostB.voiceGender)?.id) || (PREMIUM_VOICE_CATALOG.find(v => v.geminiVoiceId === hostB.neuralVoice)?.id) || (hostB.voiceGender === 'female' ? 'gemini-kore' : 'gemini-puck')}
                         onChange={(e) => {
-                          const prof = getVoiceProfileById(e.target.value) || getVoiceProfileByGeminiName(e.target.value, 'female');
+                          const prof = getVoiceProfileById(e.target.value) || getVoiceProfileByGeminiName(e.target.value, hostB.voiceGender);
                           setHostB((prev) => ({
                             ...prev,
                             voiceProfileId: prof.id,
@@ -723,10 +727,14 @@ export const HostConfigSection: React.FC<HostConfigSectionProps> = ({
                         }}
                         className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-amber-500 truncate"
                       >
-                        {PREMIUM_VOICE_CATALOG.filter((v) => v.gender === 'female').map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.flag} {v.name} ({v.vocalRegister.split(' ')[0]})
-                          </option>
+                        {(['female', 'male'] as const).map((g) => (
+                          <optgroup key={g} label={g === 'female' ? 'Voces femeninas' : 'Voces masculinas'}>
+                            {PREMIUM_VOICE_CATALOG.filter((v) => v.gender === g).map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.flag} {v.name} ({v.vocalRegister.split(' ')[0]})
+                              </option>
+                            ))}
+                          </optgroup>
                         ))}
                       </select>
                     </div>
