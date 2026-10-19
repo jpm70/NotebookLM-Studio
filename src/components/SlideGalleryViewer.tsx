@@ -20,6 +20,7 @@ import {
   Eye,
   ChevronRight,
   Code2,
+  Move,
 } from 'lucide-react';
 import {
   DialogueTurn,
@@ -39,6 +40,8 @@ interface SlideGalleryViewerProps {
   settings: StudioSettings;
   setSettings: React.Dispatch<React.SetStateAction<StudioSettings>>;
   onSelectSlideForPreview?: (index: number) => void;
+  /** Abre la vista previa en esa diapositiva con el editor de caja activo. */
+  onPlaceBox?: (index: number) => void;
   onLaunchExport?: () => void;
   onLaunchPythonBundle?: () => void;
   onSwitchToBranding?: () => void;
@@ -52,6 +55,7 @@ export const SlideGalleryViewer: React.FC<SlideGalleryViewerProps> = ({
   settings,
   setSettings,
   onSelectSlideForPreview,
+  onPlaceBox,
   onLaunchExport,
   onLaunchPythonBundle,
   onSwitchToBranding,
@@ -524,6 +528,18 @@ export const SlideGalleryViewer: React.FC<SlideGalleryViewerProps> = ({
                     <Edit3 className="w-3.5 h-3.5 text-amber-400" />
                     <span>Editar Diapositiva</span>
                   </button>
+
+                  {onPlaceBox && (turn.relevantText || turn.tableData || turn.terminalData) && (
+                    <button
+                      type="button"
+                      onClick={() => onPlaceBox(originalIndex)}
+                      className="py-1.5 px-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-amber-600/60 text-amber-300 font-semibold flex items-center gap-1 transition-colors"
+                      title="Mover y redimensionar la tarjeta, tabla o terminal de esta diapositiva"
+                    >
+                      <Move className="w-3 h-3" />
+                      <span>Colocar caja</span>
+                    </button>
+                  )}
 
                   {onSelectSlideForPreview && (
                     <button
