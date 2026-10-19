@@ -33,8 +33,9 @@ import {
   Radio,
   FolderDown,
   LayoutGrid,
+  Move,
 } from 'lucide-react';
-import { DialogueTurn, HostConfig, PodcastScript, StudioSettings, VideoBrandingSettings } from '../types';
+import { DialogueTurn, HostConfig, PodcastScript, SlideBoxLayout, StudioSettings, VideoBrandingSettings } from '../types';
 import { VideoRenderer } from '../services/videoRenderer';
 import { DEFAULT_LOGO_BASE64 } from '../assets/logoData';
 import {
@@ -98,6 +99,18 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     setCanvasEl(el);
   }, []);
   const [pendingExport, setPendingExport] = useState<'full' | 'teaser' | null>(null);
+  // Editor de posición/tamaño de la tarjeta, tabla o terminal de la diapositiva actual
+  const [editBoxMode, setEditBoxMode] = useState(false);
+  const [boxRect, setBoxRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
+  const boxDragRef = useRef<{
+    mode: 'move' | 'resize';
+    startX: number;
+    startY: number;
+    start: SlideBoxLayout;
+    rect: DOMRect;
+    startDist: number;
+  } | null>(null);
   const exportPanelRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<VideoRenderer | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
@@ -591,31 +604,131 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     }
   };
 
-  // Inicializar o redimensionar Canvas y precargar logo y fondos
+  // Un renderizador por lienzo (conserva la caché de imágenes entre redibujados)
   useEffect(() => {
-    if (!canvasRef.current) return;
-    const renderer = new VideoRenderer(canvasRef.current);
+    rendererRef.current = canvasEl ? new VideoRenderer(canvasEl) : null;
+  }, [canvasEl]);
+
+  // Dibujo estático de la vista previa; se repite cuando terminan de cargar los fondos
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer || !canvasRef.current) return;
     renderer.resize(settings.aspectRatio, '720p');
     renderer.preloadImages(branding.logoUrl || DEFAULT_LOGO_BASE64, branding.introCoverUrl);
-    renderer.preloadTurnBackgrounds(branding.turnBackgroundImages);
-    rendererRef.current = renderer;
 
-    const currentTurn = script.turns[currentTurnIndex] || script.turns[0];
-    renderer.drawFrame(
-      0,
-      currentTurn,
-      currentTurnIndex,
-      script.turns.length,
-      hostA,
-      hostB,
-      script.episode_title,
-      settings.aspectRatio,
-      false,
-      branding,
-      previewStage,
-      0.5
-    );
-  }, [canvasEl, settings.aspectRatio, currentTurnIndex, script, hostA, hostB, branding, previewStage]);
+    const drawStatic = () => {
+      const currentTurn = script.turns[currentTurnIndex] || script.turns[0];
+      renderer.drawFrame(
+        0,
+        currentTurn,
+        currentTurnIndex,
+        script.turns.length,
+        hostA,
+        hostB,
+        script.episode_title,
+        settings.aspectRatio,
+        false,
+        branding,
+        previewStage,
+        0.5
+      );
+      setBoxRect(renderer.lastBox ? { ...renderer.lastBox } : null);
+    };
+    drawStatic();
+    let stale = false;
+    renderer.preloadTurnBackgrounds(branding.turnBackgroundImages).then(() => {
+      if (!stale && !isPlayingPreview) drawStatic();
+    });
+    return () => {
+      stale = true;
+    };
+  }, [canvasEl, settings.aspectRatio, currentTurnIndex, script, hostA, hostB, branding, previewStage, isPlayingPreview]);
+
+  // ---- Editor de caja: mover / redimensionar la tarjeta, tabla o terminal de la diapositiva actual
+  const setCurrentBoxLayout = (layout: SlideBoxLayout | undefined) => {
+    const idx = currentTurnIndex;
+    setScript?.((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        turns: prev.turns.map((t, i) => {
+          if (i !== idx) return t;
+          if (layout) return { ...t, boxLayout: layout };
+          const { boxLayout: _omit, ...rest } = t;
+          return rest;
+        }),
+      };
+    });
+  };
+
+  const currentBoxLayout = (): SlideBoxLayout | null => {
+    const turn = script.turns[currentTurnIndex];
+    if (turn?.boxLayout) return turn.boxLayout;
+    const c = canvasRef.current;
+    if (!boxRect || !c) return null;
+    return { cx: (boxRect.x + boxRect.w / 2) / c.width, cy: (boxRect.y + boxRect.h / 2) / c.height, scale: 1 };
+  };
+
+  const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+  const startBoxDrag = (mode: 'move' | 'resize') => (e: React.PointerEvent) => {
+    const start = currentBoxLayout();
+    const wrap = canvasWrapRef.current;
+    if (!start || !wrap) return;
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const rect = wrap.getBoundingClientRect();
+    const centerX = rect.left + start.cx * rect.width;
+    const centerY = rect.top + start.cy * rect.height;
+    boxDragRef.current = {
+      mode,
+      startX: e.clientX,
+      startY: e.clientY,
+      start,
+      rect,
+      startDist: Math.max(8, Math.hypot(e.clientX - centerX, e.clientY - centerY)),
+    };
+  };
+
+  const moveBoxDrag = (e: React.PointerEvent) => {
+    const drag = boxDragRef.current;
+    if (!drag) return;
+    const { rect, start } = drag;
+    if (drag.mode === 'move') {
+      // Mantener la caja entera dentro del lienzo
+      const c = canvasRef.current;
+      const halfW = boxRect && c ? Math.min(0.5, boxRect.w / 2 / c.width) : 0.05;
+      const halfH = boxRect && c ? Math.min(0.5, boxRect.h / 2 / c.height) : 0.05;
+      setCurrentBoxLayout({
+        ...start,
+        cx: clamp(start.cx + (e.clientX - drag.startX) / rect.width, halfW, 1 - halfW),
+        cy: clamp(start.cy + (e.clientY - drag.startY) / rect.height, halfH, 1 - halfH),
+      });
+    } else {
+      const centerX = rect.left + start.cx * rect.width;
+      const centerY = rect.top + start.cy * rect.height;
+      const dist = Math.hypot(e.clientX - centerX, e.clientY - centerY);
+      setCurrentBoxLayout({ ...start, scale: clamp((start.scale * dist) / drag.startDist, 0.35, 2.2) });
+    }
+  };
+
+  const endBoxDrag = () => {
+    boxDragRef.current = null;
+  };
+
+  const nudgeBox = (action: 'left' | 'center' | 'right' | 'bigger' | 'smaller') => {
+    const layout = currentBoxLayout();
+    const c = canvasRef.current;
+    if (!layout || !boxRect || !c) return;
+    const halfW = boxRect.w / 2 / c.width;
+    if (action === 'left') setCurrentBoxLayout({ ...layout, cx: halfW + 0.025 });
+    else if (action === 'right') setCurrentBoxLayout({ ...layout, cx: 1 - halfW - 0.025 });
+    else if (action === 'center') setCurrentBoxLayout({ ...layout, cx: 0.5 });
+    else if (action === 'bigger') setCurrentBoxLayout({ ...layout, scale: clamp(layout.scale * 1.1, 0.35, 2.2) });
+    else setCurrentBoxLayout({ ...layout, scale: clamp(layout.scale / 1.1, 0.35, 2.2) });
+  };
+
 
   // Grabación pedida desde una vista sin lienzo: arrancarla en cuanto el lienzo exista
   useEffect(() => {
@@ -1213,11 +1326,38 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
 
           {/* Actual Canvas */}
           <div
+            ref={canvasWrapRef}
             className={`relative rounded-xl overflow-hidden shadow-2xl border border-slate-700/60 transition-all ${
               isVertical ? 'max-w-[340px] aspect-[9/16]' : 'max-w-2xl w-full aspect-video'
             }`}
           >
             <canvas ref={attachCanvas} className="w-full h-full object-contain block bg-slate-950" />
+
+            {editBoxMode && boxRect && canvasRef.current && previewStage === 'dialogue' && !isPlayingPreview && (
+              <div
+                onPointerDown={startBoxDrag('move')}
+                onPointerMove={moveBoxDrag}
+                onPointerUp={endBoxDrag}
+                onPointerCancel={endBoxDrag}
+                className="absolute border-2 border-dashed border-amber-400 bg-amber-400/10 rounded-lg cursor-move touch-none"
+                style={{
+                  left: `${(boxRect.x / canvasRef.current.width) * 100}%`,
+                  top: `${(boxRect.y / canvasRef.current.height) * 100}%`,
+                  width: `${(boxRect.w / canvasRef.current.width) * 100}%`,
+                  height: `${(boxRect.h / canvasRef.current.height) * 100}%`,
+                }}
+                title="Arrastra para mover la caja"
+              >
+                <div
+                  onPointerDown={startBoxDrag('resize')}
+                  onPointerMove={moveBoxDrag}
+                  onPointerUp={endBoxDrag}
+                  onPointerCancel={endBoxDrag}
+                  className="absolute -right-2 -bottom-2 w-4 h-4 rounded-sm bg-amber-400 border-2 border-slate-950 cursor-nwse-resize touch-none"
+                  title="Arrastra para cambiar el tamaño"
+                />
+              </div>
+            )}
 
             {/* Overlaid preview badge */}
             <div className="absolute top-3 left-3 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md text-[10px] text-amber-400 font-mono font-bold flex items-center gap-1">
@@ -1226,8 +1366,73 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
             </div>
           </div>
 
+          {/* Editor de caja de la diapositiva actual */}
+          {editBoxMode && (
+            <div className="mt-3 w-full max-w-2xl p-3 rounded-xl bg-amber-950/30 border border-amber-700/50 text-[11px] text-amber-100 space-y-2">
+              {boxRect && previewStage === 'dialogue' ? (
+                <>
+                  <p>
+                    Arrastra la caja para moverla y el tirador de la esquina para cambiar su tamaño. Se guarda en esta
+                    diapositiva ({currentTurnIndex + 1}) y se usa al grabar el vídeo.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(
+                      [
+                        ['left', '⇤ Izquierda'],
+                        ['center', 'Centro'],
+                        ['right', 'Derecha ⇥'],
+                        ['smaller', '− Más pequeña'],
+                        ['bigger', '+ Más grande'],
+                      ] as const
+                    ).map(([action, label]) => (
+                      <button
+                        key={action}
+                        type="button"
+                        onClick={() => nudgeBox(action)}
+                        className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:border-amber-500/60 text-slate-200 font-semibold"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setCurrentBoxLayout(undefined)}
+                      disabled={!script.turns[currentTurnIndex]?.boxLayout}
+                      className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:border-amber-500/60 text-slate-200 font-semibold disabled:opacity-40"
+                    >
+                      Automático
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p>Esta diapositiva no tiene tarjeta, tabla ni terminal que colocar.</p>
+              )}
+            </div>
+          )}
+
           {/* Canvas Controls */}
           <div className="flex items-center gap-3 mt-4 flex-wrap justify-center">
+            <button
+              type="button"
+              onClick={() => {
+                const next = !editBoxMode;
+                setEditBoxMode(next);
+                if (next) {
+                  setIsPlayingPreview(false);
+                  setPreviewStage('dialogue');
+                }
+              }}
+              className={`px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm ${
+                editBoxMode
+                  ? 'bg-amber-500 text-slate-950 border-amber-400'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+              }`}
+              title="Mover y redimensionar la tarjeta, tabla o terminal de esta diapositiva"
+            >
+              <Move className="w-3.5 h-3.5" />
+              <span>{editBoxMode ? 'Terminar de colocar' : 'Mover / redimensionar caja'}</span>
+            </button>
+
             <button
               onClick={() => setIsPlayingPreview(!isPlayingPreview)}
               className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 transition-all shadow-sm"
