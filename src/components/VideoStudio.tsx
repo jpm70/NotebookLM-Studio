@@ -96,6 +96,8 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     canvasRef.current = el;
     setCanvasEl(el);
   }, []);
+  const [pendingExport, setPendingExport] = useState<'full' | 'teaser' | null>(null);
+  const exportPanelRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<VideoRenderer | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const introLogoInputRef = useRef<HTMLInputElement | null>(null);
@@ -614,6 +616,16 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     );
   }, [canvasEl, settings.aspectRatio, currentTurnIndex, script, hostA, hostB, branding, previewStage]);
 
+  // Grabación pedida desde una vista sin lienzo: arrancarla en cuanto el lienzo exista
+  useEffect(() => {
+    if (!pendingExport || !canvasEl) return;
+    const mode = pendingExport;
+    setPendingExport(null);
+    handleExportVideo(mode);
+    setTimeout(() => exportPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingExport, canvasEl]);
+
   // Bucle de animación en vivo de previsualización
   useEffect(() => {
     if (!isPlayingPreview || !rendererRef.current) return;
@@ -678,7 +690,14 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
 
   // Exportar vídeo a .mp4 con integración directa de voces de locutores, BGM, Auto-Ducking y SFX
   const handleExportVideo = async (targetMode: 'full' | 'teaser' = exportMode) => {
-    if (!canvasRef.current || isExporting) return;
+    if (isExporting) return;
+    if (!canvasRef.current) {
+      // El lienzo solo existe en "Ajustes & Portada" (p. ej. se lanza desde la Galería):
+      // se cambia de vista y la grabación arranca en cuanto el lienzo aparece
+      setActiveStudioView('branding');
+      setPendingExport(targetMode);
+      return;
+    }
 
     exportCancelRef.current = false;
     setIsExporting(true);
@@ -2556,7 +2575,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
           </div>
 
           {/* 7. Export Action Card */}
-          <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4 shadow-xl">
+          <div ref={exportPanelRef} className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
                 <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
