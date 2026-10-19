@@ -23,6 +23,15 @@ if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D
   };
 }
 
+/** Quita marcas de formato que no deben verse en pantalla («## » de títulos y **negritas**). */
+function cleanMarkup(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^\s*#{1,6}\s*/, '').replace(/\*\*|__/g, ''))
+    .join('\n')
+    .trim();
+}
+
 export class VideoRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -188,7 +197,8 @@ export class VideoRenderer {
     const isHostA = turn ? turn.speaker === 'Host_A' : true;
     const currentEmotion = turn ? turn.emotion : 'reflexivo';
     const currentText = turn ? turn.text : 'Esperando inicio del podcast...';
-    const currentVisualTitle = turn ? turn.visual_title : episodeTitle;
+    const currentVisualTitle = cleanMarkup(turn ? turn.visual_title : episodeTitle);
+    const sectionLabel = cleanMarkup(turn?.sectionTitle || '') || currentVisualTitle;
 
     const vStyle = branding?.visualStyle || 'studio';
     const transition = branding?.turnTransition || 'ken-burns';
@@ -412,8 +422,8 @@ export class VideoRenderer {
     if (turn?.slideType === 'terminal' || turn?.terminalData) {
       this.drawTerminalSlide(
         turn.terminalData!,
-        turn.sectionTitle || currentVisualTitle,
-        turn.relevantText,
+        sectionLabel,
+        cleanMarkup(turn.relevantText || '') || undefined,
         isVertical,
         w,
         h,
@@ -423,8 +433,8 @@ export class VideoRenderer {
     } else if (turn?.slideType === 'table' || turn?.tableData) {
       this.drawTableSlide(
         turn.tableData!,
-        turn.sectionTitle || currentVisualTitle,
-        turn.relevantText,
+        sectionLabel,
+        cleanMarkup(turn.relevantText || '') || undefined,
         isVertical,
         w,
         h,
@@ -433,8 +443,8 @@ export class VideoRenderer {
       );
     } else if (turn?.relevantText) {
       this.drawContextAnimeCard(
-        turn.sectionTitle || currentVisualTitle,
-        turn.relevantText,
+        sectionLabel,
+        cleanMarkup(turn.relevantText),
         isVertical,
         w,
         h,

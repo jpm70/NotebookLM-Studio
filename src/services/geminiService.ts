@@ -135,7 +135,9 @@ Directrices:
 
 /** Recorta campos desbocados (bucles de repetición del modelo) y pone los datos exactos de tablas y terminales. */
 function finalizeTurns(turns: any[], source: PreparedSource): DialogueTurn[] {
-  const clip = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  // Sin las marcas "##" de los puntos que se le pasan como contexto, ni negritas de markdown
+  const clip = (v: unknown, max: number) =>
+    typeof v === 'string' ? v.replace(/^\s*#{1,6}\s*/gm, '').replace(/\*\*/g, '').trim().slice(0, max) : '';
   return turns
     .filter((t) => t && typeof t.text === 'string' && t.text.trim())
     .map((t) => {
