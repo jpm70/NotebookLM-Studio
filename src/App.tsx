@@ -15,7 +15,8 @@ import { PythonPackageViewer } from './components/PythonPackageViewer';
 import { HostConfig, PodcastScript, StudioSettings, ConnectionStatus } from './types';
 import { generateScriptWithGemini } from './services/geminiService';
 import { getStoredApiKey } from './services/apiKeyStorage';
-import { Sparkles, FileText, Radio, Film, AlertCircle, ExternalLink } from 'lucide-react';
+import { Sparkles, FileText, Radio, Film, AlertCircle, ExternalLink, Save, FolderOpen, Loader2 } from 'lucide-react';
+import { openProject, projectFileName, saveProject } from './services/projectFile';
 import { DEFAULT_LOGO_BASE64, DEFAULT_LOGO_PATH } from './assets/logoData';
 import {
   DEFAULT_HOST_A_AVATAR,
@@ -174,6 +175,9 @@ export default function App() {
   const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
   const generationAbortRef = useRef<AbortController | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [projectBusy, setProjectBusy] = useState<'saving' | 'opening' | null>(null);
+  const [projectNotice, setProjectNotice] = useState<string | null>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
 
   // Connection & API Key Modal State
   const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
@@ -200,6 +204,59 @@ export default function App() {
       localStorage.setItem('unfantasma_custom_logo', dataUrl);
     } catch {
       // Ignorar si excede cuota de almacenamiento
+    }
+  };
+
+  // ---- Guardar / Abrir proyecto (.nlmstudio.zip)
+  const handleSaveProject = async () => {
+    try {
+      setProjectBusy('saving');
+      setProjectNotice(null);
+      const state = { sourceText, hostA, hostB, settings, script };
+      const { blob, voices } = await saveProject(state);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = projectFileName(state);
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      setProjectNotice(
+        `✓ Proyecto guardado (${(blob.size / 1048576).toFixed(1)} MB, ${voices} voces ya generadas). Ábrelo con «Abrir proyecto» para continuar.`
+      );
+    } catch (err: any) {
+      setErrorMessage(`No se pudo guardar el proyecto: ${err?.message || err}`);
+    } finally {
+      setProjectBusy(null);
+    }
+  };
+
+  const handleOpenProject = async (file?: File | null) => {
+    if (!file) return;
+    if (!window.confirm('Abrir el proyecto sustituirá el trabajo actual (guion, ajustes y fondos). ¿Continuar?')) return;
+    try {
+      setProjectBusy('opening');
+      setProjectNotice(null);
+      setErrorMessage(null);
+      const p = await openProject(file);
+      setSourceText(p.sourceText);
+      setHostA({ ...INITIAL_HOST_A, ...p.hostA });
+      setHostB({ ...INITIAL_HOST_B, ...p.hostB });
+      setSettings({
+        ...INITIAL_SETTINGS,
+        ...p.settings,
+        branding: { ...INITIAL_SETTINGS.branding, ...(p.settings?.branding || {}) },
+      });
+      setScript(p.script);
+      setStudioSubTab(p.script ? 'video' : 'input');
+      const turns = p.script?.turns.length || 0;
+      setProjectNotice(
+        `✓ Proyecto abierto: ${turns} turnos, ${p.backgroundCount} fondos y ${p.voiceCount} voces ya generadas` +
+          (turns && p.voiceCount < turns ? ` (al grabar solo se pedirán las ${turns - p.voiceCount} que faltan).` : '.')
+      );
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'No se pudo abrir el proyecto.');
+    } finally {
+      setProjectBusy(null);
     }
   };
 
@@ -336,6 +393,49 @@ export default function App() {
         {/* Tab 1: Studio Workflow */}
         {activeTab === 'studio' && (
           <div className="space-y-6">
+            {/* Guardar / Abrir proyecto */}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {projectNotice && (
+                <span className="mr-auto text-[11px] text-emerald-300 flex items-center gap-2">
+                  {projectNotice}
+                  <button type="button" onClick={() => setProjectNotice(null)} className="text-slate-500 hover:text-white" title="Cerrar aviso">
+                    ×
+                  </button>
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={handleSaveProject}
+                disabled={projectBusy !== null}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-emerald-500/60 text-slate-200 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                title="Descarga un archivo con el guion, los ajustes, los fondos y las voces ya generadas"
+              >
+                {projectBusy === 'saving' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5 text-emerald-400" />}
+                Guardar proyecto
+              </button>
+              <button
+                type="button"
+                onClick={() => projectInputRef.current?.click()}
+                disabled={projectBusy !== null}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-emerald-500/60 text-slate-200 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                title="Continúa un proyecto guardado (.nlmstudio.zip)"
+              >
+                {projectBusy === 'opening' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />}
+                Abrir proyecto
+              </button>
+              <input
+                ref={projectInputRef}
+                type="file"
+                accept=".zip,application/zip"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  handleOpenProject(f);
+                }}
+              />
+            </div>
+
             {/* Step Tabs Navigation */}
             <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-800">
               <button
