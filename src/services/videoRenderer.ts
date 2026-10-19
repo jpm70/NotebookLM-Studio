@@ -1,4 +1,5 @@
 import {
+  SlideBoxLayout,
   DialogueTurn,
   HostConfig,
   StudioSettings,
@@ -69,6 +70,53 @@ export class VideoRenderer {
   }
 
   /** Precarga los fondos y resuelve cuando todos están decodificados (o tras 15 s como máximo). */
+
+  /** Caja (en píxeles del lienzo) de la tarjeta, tabla o terminal dibujada en el último fotograma. */
+  public lastBox: { x: number; y: number; w: number; h: number } | null = null;
+
+  /**
+   * Coloca la caja: posición automática o la que eligió el usuario para esa diapositiva
+   * (centro relativo al lienzo + escala). Debe llamarse justo después de ctx.save().
+   */
+  private placeBox(box: { x: number; y: number; w: number; h: number }, layout: SlideBoxLayout | undefined, cw: number, chh: number) {
+    if (!layout) {
+      this.lastBox = { ...box };
+      return;
+    }
+    const scale = Math.min(2.2, Math.max(0.35, layout.scale || 1));
+    const tcx = layout.cx * cw;
+    const tcy = layout.cy * chh;
+    this.ctx.translate(tcx, tcy);
+    this.ctx.scale(scale, scale);
+    this.ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2));
+    this.lastBox = { x: tcx - (box.w * scale) / 2, y: tcy - (box.h * scale) / 2, w: box.w * scale, h: box.h * scale };
+  }
+
+  /** Parte un texto en líneas que caben en `maxW` con la fuente actual del contexto. */
+  private wrapByWidth(text: string, maxW: number, maxLines = 99): string[] {
+    const words = text.split(/\s+/).filter(Boolean);
+    const lines: string[] = [];
+    let line = '';
+    for (const word of words) {
+      const probe = line ? `${line} ${word}` : word;
+      if (this.ctx.measureText(probe).width > maxW && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = probe;
+      }
+    }
+    if (line) lines.push(line);
+    if (lines.length > maxLines) {
+      const kept = lines.slice(0, maxLines);
+      let last = kept[maxLines - 1] + '…';
+      while (last.length > 2 && this.ctx.measureText(last).width > maxW) last = last.slice(0, -2) + '…';
+      kept[maxLines - 1] = last;
+      return kept;
+    }
+    return lines;
+  }
+
   public preloadTurnBackgrounds(backgrounds?: Record<number, string>): Promise<void> {
     if (!backgrounds) return Promise.resolve();
     const pending: Promise<unknown>[] = [];
@@ -358,6 +406,7 @@ export class VideoRenderer {
     ctx.restore();
 
     // 3. Diapositiva Especializada Central: Terminal, Tabla o Tarjeta Contextual Anime
+    this.lastBox = null;
     const hasCenterSlide = Boolean(turn?.terminalData || turn?.tableData || turn?.relevantText);
 
     if (turn?.slideType === 'terminal' || turn?.terminalData) {
@@ -368,7 +417,8 @@ export class VideoRenderer {
         isVertical,
         w,
         h,
-        time
+        time,
+        turn.boxLayout
       );
     } else if (turn?.slideType === 'table' || turn?.tableData) {
       this.drawTableSlide(
@@ -378,7 +428,8 @@ export class VideoRenderer {
         isVertical,
         w,
         h,
-        time
+        time,
+        turn.boxLayout
       );
     } else if (turn?.relevantText) {
       this.drawContextAnimeCard(
@@ -386,7 +437,8 @@ export class VideoRenderer {
         turn.relevantText,
         isVertical,
         w,
-        h
+        h,
+        turn.boxLayout
       );
     }
 
@@ -1623,8 +1675,17 @@ export class VideoRenderer {
     // Badge de Categoría con borde neón animado
     const catAlpha = Math.min(1.0, Math.max(0, (progress - 0.06) * 3));
     ctx.globalAlpha = catAlpha;
-    const catW = Math.min(w * 0.82, 480);
-    const catH = 38;
+    // Recuadro medido con el texto (antes 480 px fijos: los lemas largos se salían)
+    const catLabel = `⚡ ${categoryTag.toUpperCase()}`;
+    let catFont = Math.round(h * 0.017);
+    ctx.font = `800 ${catFont}px "Fira Code", "Plus Jakarta Sans", monospace`;
+    const maxCatText = w * 0.86;
+    if (ctx.measureText(catLabel).width > maxCatText) {
+      catFont = Math.max(9, Math.floor((catFont * maxCatText) / ctx.measureText(catLabel).width));
+      ctx.font = `800 ${catFont}px "Fira Code", "Plus Jakarta Sans", monospace`;
+    }
+    const catW = Math.min(w * 0.92, ctx.measureText(catLabel).width + 48);
+    const catH = Math.max(30, Math.round(catFont * 2.2));
     const catY = isVertical ? -150 : -130;
 
     ctx.fillStyle = 'rgba(11, 18, 33, 0.92)';
@@ -1639,8 +1700,10 @@ export class VideoRenderer {
 
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#38bdf8';
-    ctx.font = `800 ${Math.round(h * 0.017)}px "Fira Code", "Plus Jakarta Sans", monospace`;
-    ctx.fillText(`⚡ ${categoryTag.toUpperCase()}`, 0, catY + 24);
+    ctx.font = `800 ${catFont}px "Fira Code", "Plus Jakarta Sans", monospace`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(catLabel, 0, catY + catH / 2 + 1);
+    ctx.textBaseline = 'alphabetic';
 
     // Título Principal en blanco ultra nítido con sombra cinemática
     ctx.globalAlpha = titleAlpha;
@@ -1728,20 +1791,32 @@ export class VideoRenderer {
     isVertical: boolean,
     w: number,
     h: number,
-    time: number
+    time: number,
+    layout?: SlideBoxLayout
   ) {
     const { ctx } = this;
     ctx.save();
-
-    const termW = isVertical ? w * 0.92 : w * 0.76;
-    // Alto ajustado a las líneas reales (antes era fijo y dejaba media ventana vacía tapando el fondo)
-    const fontSize = Math.max(12, Math.round(h * (isVertical ? 0.016 : 0.019)));
-    const lineStep = fontSize * 1.6;
+    // Ancho y alto ajustados al contenido (antes fijos, tapando la ilustración)
+    const maxTermW = isVertical ? w * 0.94 : w * 0.82;
     const maxLines = isVertical ? 9 : 11;
     const shownLines = Math.min(term.lines.length, maxLines);
+    let fontSize = Math.max(12, Math.round(h * (isVertical ? 0.016 : 0.019)));
+    const monoFont = (size: number) => `600 ${size}px "Fira Code", "Courier New", Consolas, monospace`;
+    ctx.font = monoFont(fontSize);
+    const extraPad = 24 + 24 + 22; // márgenes + prefijo del prompt
+    let widest = Math.max(0, ...term.lines.slice(0, maxLines).map((l) => ctx.measureText(l.trim()).width));
+    if (widest + extraPad > maxTermW) {
+      // Línea demasiado larga: reducir la letra antes que desbordar
+      fontSize = Math.max(10, Math.floor((fontSize * (maxTermW - extraPad)) / widest));
+      ctx.font = monoFont(fontSize);
+      widest = Math.max(0, ...term.lines.slice(0, maxLines).map((l) => ctx.measureText(l.trim()).width));
+    }
+    const lineStep = fontSize * 1.6;
+    const termW = Math.min(maxTermW, Math.max(w * (isVertical ? 0.7 : 0.42), widest + extraPad));
     const termH = Math.min(isVertical ? h * 0.46 : h * 0.5, 38 + 26 + (shownLines + 1) * lineStep);
     const termX = (w - termW) / 2;
     const termY = isVertical ? h * 0.17 : h * 0.19;
+    this.placeBox({ x: termX, y: termY, w: termW, h: termH }, layout, w, h);
 
     // Sombra profunda y resplandor de ventana
     ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
@@ -1820,7 +1895,7 @@ export class VideoRenderer {
 
     // Contenido de la consola con resalto de sintaxis de comandos
     ctx.textAlign = 'left';
-    ctx.font = `600 ${fontSize}px "Fira Code", "Courier New", Consolas, monospace`;
+    ctx.font = monoFont(fontSize);
     const contentPadX = termX + 24;
     let lineY = termY + titleBarH + 26;
     const linesToDraw = term.lines.slice(0, maxLines);
@@ -1913,198 +1988,155 @@ export class VideoRenderer {
     isVertical: boolean,
     w: number,
     h: number,
-    time: number
+    time: number,
+    layout?: SlideBoxLayout
   ) {
     const { ctx } = this;
     ctx.save();
 
-    const tblW = isVertical ? w * 0.94 : w * 0.82;
-    // Alto ajustado a las filas reales (antes el 40 % de la pantalla se repartía entre 2-3 filas)
-    const maxRows = Math.min(tbl.rows.length, isVertical ? 5 : 6);
-    const fontSize = Math.max(12, Math.round(h * (isVertical ? 0.0145 : 0.017)));
-    const headerH = Math.round(Math.max(40, h * 0.065));
-    const rowH = Math.round(fontSize * 3.2);
-    const tblH = headerH + Math.max(1, maxRows) * rowH;
+    const numCols = Math.max(1, tbl.headers.length || (tbl.rows[0]?.length ?? 1));
+    const headers = Array.from({ length: numCols }, (_, c) => (tbl.headers[c] || '').toUpperCase());
+    const rows = tbl.rows.slice(0, isVertical ? 5 : 6).map((r) => Array.from({ length: numCols }, (_, c) => (r[c] || '').trim()));
+
+    // Columnas con ancho según su contenido y un máximo: el texto largo baja a varias líneas,
+    // así la tabla queda más alta y estrecha y deja ver la ilustración
+    const maxTblW = isVertical ? w * 0.94 : w * 0.82;
+    const maxTblH = isVertical ? h * 0.5 : h * 0.56;
+    const colCap = isVertical ? w * 0.42 : w * 0.3;
+    const padX = 14;
+
+    let fontSize = Math.max(12, Math.round(h * (isVertical ? 0.0145 : 0.0175)));
+    let headSize = Math.max(11, Math.round(h * 0.0155));
+    let colW: number[] = [];
+    let cellLines: string[][][] = [];
+    let headLines: string[][] = [];
+    let rowHeights: number[] = [];
+    let headerH = 0;
+    let tblW = 0;
+    let tblH = 0;
+
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const lineH = fontSize * 1.32;
+      // Ancho natural de cada columna (cabecera y celdas en una línea)
+      ctx.font = `800 ${headSize}px "Plus Jakarta Sans", sans-serif`;
+      const headNat = headers.map((hd, c) => ctx.measureText(c === 0 ? `📌 ${hd}` : hd).width);
+      ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
+      const cellNat = headers.map((_, c) => Math.max(0, ...rows.map((r) => ctx.measureText(r[c]).width)));
+      // Mínimo: la palabra más larga de la columna
+      const minWord = headers.map((_, c) =>
+        Math.max(0, ...rows.flatMap((r) => r[c].split(/\s+/).map((wd) => ctx.measureText(wd).width)))
+      );
+      colW = headers.map((_, c) => {
+        const natural = Math.max(headNat[c], cellNat[c]) + padX * 2;
+        return Math.max(Math.min(natural, colCap), Math.min(headNat[c], colCap) + padX * 2, minWord[c] + padX * 2);
+      });
+      // Si no cabe en el ancho máximo, recortar las columnas más anchas
+      let total = colW.reduce((a, b) => a + b, 0);
+      for (let guard = 0; total > maxTblW && guard < 60; guard++) {
+        const widestIdx = colW.indexOf(Math.max(...colW));
+        colW[widestIdx] = Math.max(minWord[widestIdx] + padX * 2, colW[widestIdx] * 0.92);
+        total = colW.reduce((a, b) => a + b, 0);
+      }
+      tblW = Math.min(maxTblW, total);
+      if (total > maxTblW) colW = colW.map((cw) => (cw * maxTblW) / total);
+
+      ctx.font = `800 ${headSize}px "Plus Jakarta Sans", sans-serif`;
+      headLines = headers.map((hd, c) => this.wrapByWidth(c === 0 ? `📌 ${hd}` : hd, colW[c] - padX * 2, 2));
+      headerH = Math.max(...headLines.map((l) => l.length)) * headSize * 1.3 + 22;
+
+      ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
+      cellLines = rows.map((r) => r.map((cell, c) => this.wrapByWidth(cell, colW[c] - padX * 2, 4)));
+      rowHeights = cellLines.map((cells) => Math.max(1, ...cells.map((l) => l.length)) * lineH + 18);
+      tblH = headerH + rowHeights.reduce((a, b) => a + b, 0);
+      if (tblH <= maxTblH || fontSize <= 10) break;
+      fontSize -= 1;
+      headSize = Math.max(10, headSize - 1);
+    }
+
     const tblX = (w - tblW) / 2;
     const tblY = isVertical ? h * 0.17 : h * 0.19;
+    this.placeBox({ x: tblX, y: tblY, w: tblW, h: tblH }, layout, w, h);
 
-    // Contenedor principal con cristal escarchado oscuro
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-    ctx.shadowBlur = 28;
-    ctx.shadowOffsetY = 10;
-
-    ctx.fillStyle = 'rgba(11, 17, 32, 0.96)';
+    // Contenedor con cristal oscuro
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    ctx.shadowBlur = 24;
+    ctx.shadowOffsetY = 8;
+    ctx.fillStyle = 'rgba(11, 17, 32, 0.92)';
     ctx.strokeStyle = '#263346';
-    ctx.lineWidth = 1.8;
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.roundRect(tblX, tblY, tblW, tblH, 14);
+    ctx.roundRect(tblX, tblY, tblW, tblH, 12);
     ctx.fill();
     ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
 
-    const numCols = Math.max(1, tbl.headers.length || 3);
-
-    // CÁLCULO DE ANCHOS AUTOADAPTABLES SEGÚN EL CONTENIDO DE CADA COLUMNA
-    const weights: number[] = [];
-    tbl.headers.forEach((hdr, cIdx) => {
-      let maxCharLength = hdr.length;
-      tbl.rows.forEach((row) => {
-        const cell = row[cIdx] || '';
-        if (cell.length > maxCharLength) maxCharLength = cell.length;
-      });
-      // Ponderación: mínimo 14 caracteres de peso, raíz cuadrada para balancear texto largo
-      weights.push(Math.max(12, Math.sqrt(maxCharLength) * 3.5));
-    });
-
-    const totalWeight = weights.reduce((acc, v) => acc + v, 0);
-    const colWidths = weights.map((wt) => (wt / totalWeight) * tblW);
-
-    // Cabecera de la tabla con gradiente y separadores
+    // Cabecera
     const headGrad = ctx.createLinearGradient(tblX, tblY, tblX, tblY + headerH);
     headGrad.addColorStop(0, '#1e293b');
     headGrad.addColorStop(1, '#0f172a');
     ctx.fillStyle = headGrad;
     ctx.beginPath();
-    ctx.roundRect(tblX, tblY, tblW, headerH, [14, 14, 0, 0]);
+    ctx.roundRect(tblX, tblY, tblW, headerH, [12, 12, 0, 0]);
     ctx.fill();
 
-    // Título / Badge de la tabla en cabecera
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `800 ${Math.round(h * 0.016)}px "Plus Jakarta Sans", sans-serif`;
-
-    let colStartX = tblX;
-    tbl.headers.forEach((hdr, cIdx) => {
-      const cW = colWidths[cIdx];
-      const cellCenterX = colStartX + cW / 2;
-
-      // Columna 0 con icono distintivo
-      if (cIdx === 0) {
-        ctx.textAlign = 'left';
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillText(`📌 ${hdr.toUpperCase()}`, colStartX + 16, tblY + headerH * 0.62);
-      } else {
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#f8fafc';
-        ctx.fillText(hdr.toUpperCase(), cellCenterX, tblY + headerH * 0.62);
-      }
-
-      // Línea divisoria vertical en cabecera
-      if (cIdx > 0) {
+    ctx.font = `800 ${headSize}px "Plus Jakarta Sans", sans-serif`;
+    ctx.textBaseline = 'middle';
+    let colX = tblX;
+    headLines.forEach((lines, c) => {
+      const cw = colW[c];
+      ctx.textAlign = c === 0 ? 'left' : 'center';
+      ctx.fillStyle = c === 0 ? '#38bdf8' : '#f8fafc';
+      const startY = tblY + headerH / 2 - ((lines.length - 1) * headSize * 1.3) / 2;
+      lines.forEach((ln, i) => ctx.fillText(ln, c === 0 ? colX + padX : colX + cw / 2, startY + i * headSize * 1.3));
+      if (c > 0) {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(colStartX, tblY + 6);
-        ctx.lineTo(colStartX, tblY + headerH - 6);
+        ctx.moveTo(colX, tblY + 6);
+        ctx.lineTo(colX, tblY + headerH - 6);
         ctx.stroke();
       }
-
-      colStartX += cW;
+      colX += cw;
     });
 
-    // Filas autoadaptables con efecto cebra y detección inteligente de etiquetas (pills)
+    // Filas (cebra) con el texto repartido en líneas
     ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
-
-    for (let rIdx = 0; rIdx < maxRows; rIdx++) {
-      const row = tbl.rows[rIdx];
-      const rY = tblY + headerH + rIdx * rowH;
-
-      // Fondo cebra
-      ctx.fillStyle = rIdx % 2 === 0 ? 'rgba(30, 41, 59, 0.45)' : 'rgba(15, 23, 42, 0.75)';
-      ctx.fillRect(tblX, rY, tblW, rowH);
-
-      // Divisor horizontal
-      ctx.strokeStyle = 'rgba(51, 65, 85, 0.5)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(tblX, rY + rowH);
-      ctx.lineTo(tblX + tblW, rY + rowH);
-      ctx.stroke();
-
-      let cellX = tblX;
-      row.slice(0, numCols).forEach((cellText, cIdx) => {
-        const cW = colWidths[cIdx];
-        const textClean = cellText.trim();
-        const textLower = textClean.toLowerCase();
-
-        // Detección de badges / pills de seguridad (WPA3, WPA2, WEP, Inseguro, Recomendado, etc.)
-        const isSecurityBadge =
-          textLower.includes('wpa3') ||
-          textLower.includes('wpa2') ||
-          textLower.includes('wep') ||
-          textLower.includes('inseguro') ||
-          textLower.includes('seguro') ||
-          textLower.includes('activo') ||
-          textLower.includes('crítico') ||
-          textLower.includes('vulnerable') ||
-          textLower.includes('alta') ||
-          textLower.includes('baja') ||
-          textLower.includes('recomendado');
-
-        if (isSecurityBadge && textClean.length < 18) {
-          // Dibujar pill badge redondeado
-          let pillBg = 'rgba(59, 130, 246, 0.2)';
-          let pillBorder = '#3b82f6';
-          let pillColor = '#93c5fd';
-
-          if (textLower.includes('wpa3') || textLower.includes('recomendado') || textLower.includes('seguro') || textLower.includes('activo')) {
-            pillBg = 'rgba(16, 185, 129, 0.25)';
-            pillBorder = '#10b981';
-            pillColor = '#6ee7b7';
-          } else if (textLower.includes('wep') || textLower.includes('inseguro') || textLower.includes('crítico') || textLower.includes('vulnerable')) {
-            pillBg = 'rgba(239, 68, 68, 0.25)';
-            pillBorder = '#ef4444';
-            pillColor = '#fca5a5';
-          } else if (textLower.includes('wpa2') || textLower.includes('alta')) {
-            pillBg = 'rgba(245, 158, 11, 0.25)';
-            pillBorder = '#f59e0b';
-            pillColor = '#fcd34d';
-          }
-
-          const pillW = Math.min(cW - 16, Math.max(68, ctx.measureText(textClean).width + 18));
-          const pillH = Math.min(rowH * 0.72, 28);
-          const pillCenterX = cellX + cW / 2;
-
-          ctx.fillStyle = pillBg;
-          ctx.strokeStyle = pillBorder;
-          ctx.lineWidth = 1.2;
-          ctx.beginPath();
-          ctx.roundRect(pillCenterX - pillW / 2, rY + (rowH - pillH) / 2, pillW, pillH, pillH / 2);
-          ctx.fill();
-          ctx.stroke();
-
-          ctx.textAlign = 'center';
-          ctx.fillStyle = pillColor;
-          ctx.fillText(textClean, pillCenterX, rY + rowH / 2 + 5);
-        } else {
-          // Texto estándar o multi-línea
-          if (cIdx === 0) {
-            ctx.textAlign = 'left';
-            ctx.fillStyle = '#38bdf8'; // Nombre de protocolo o sección en cyan
-            ctx.fillText(textClean, cellX + 16, rY + rowH / 2 + 5);
-          } else {
-            ctx.textAlign = 'center';
-            ctx.fillStyle = '#e2e8f0'; // Contenido descriptivo en blanco perla
-
-            // Multi-línea inteligente si excede el ancho disponible
-            const maxChars = Math.floor(cW / (fontSize * 0.58));
-            if (textClean.length > maxChars && textClean.includes(' ')) {
-              const words = textClean.split(' ');
-              const mid = Math.ceil(words.length / 2);
-              const line1 = words.slice(0, mid).join(' ');
-              const line2 = words.slice(mid).join(' ');
-              ctx.fillText(line1, cellX + cW / 2, rY + rowH * 0.38 + 4);
-              ctx.fillText(line2, cellX + cW / 2, rY + rowH * 0.72 + 4);
-            } else {
-              const textTrunc = textClean.length > maxChars ? textClean.substring(0, maxChars - 2) + '...' : textClean;
-              ctx.fillText(textTrunc, cellX + cW / 2, rY + rowH / 2 + 5);
-            }
-          }
-        }
-
-        cellX += cW;
+    const lineH = fontSize * 1.32;
+    let rowY = tblY + headerH;
+    cellLines.forEach((cells, r) => {
+      const rh = rowHeights[r];
+      ctx.fillStyle = r % 2 === 0 ? 'rgba(30, 41, 59, 0.45)' : 'rgba(15, 23, 42, 0.7)';
+      if (r === cellLines.length - 1) {
+        ctx.beginPath();
+        ctx.roundRect(tblX, rowY, tblW, rh, [0, 0, 12, 12]);
+        ctx.fill();
+      } else {
+        ctx.fillRect(tblX, rowY, tblW, rh);
+        ctx.strokeStyle = 'rgba(51, 65, 85, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(tblX, rowY + rh);
+        ctx.lineTo(tblX + tblW, rowY + rh);
+        ctx.stroke();
+      }
+      let cx = tblX;
+      cells.forEach((lines, c) => {
+        const cw = colW[c];
+        const text = rows[r][c].toLowerCase();
+        ctx.textAlign = c === 0 ? 'left' : 'center';
+        if (c === 0) ctx.fillStyle = '#38bdf8';
+        else if (/inseguro|crítico|vulnerable|\bwep\b/.test(text)) ctx.fillStyle = '#fca5a5';
+        else if (/recomendado|\bseguro\b|wpa3/.test(text)) ctx.fillStyle = '#6ee7b7';
+        else ctx.fillStyle = '#e2e8f0';
+        const startY = rowY + rh / 2 - ((lines.length - 1) * lineH) / 2;
+        lines.forEach((ln, i) => ctx.fillText(ln, c === 0 ? cx + padX : cx + cw / 2, startY + i * lineH));
+        cx += cw;
       });
-    }
+      rowY += rh;
+    });
 
+    ctx.textBaseline = 'alphabetic';
     ctx.restore();
   }
 
@@ -2116,15 +2148,16 @@ export class VideoRenderer {
     relevantText: string | undefined,
     isVertical: boolean,
     w: number,
-    h: number
+    h: number,
+    layout?: SlideBoxLayout
   ) {
     if (!relevantText) return;
     const { ctx } = this;
     ctx.save();
 
-    // Ideas clave como viñetas (Gemini las separa con punto y coma; el parser, con saltos de línea)
+    // Ideas clave como viñetas (Gemini las separa con punto y coma; el parser, con saltos de línea o «·»)
     const items = relevantText
-      .split(/\n|;|\s•\s/)
+      .split(/\n|;|\s[•·]\s/)
       .map((t) => t.replace(/^[•\-–\s]+/, '').trim())
       .map((t) => t.charAt(0).toUpperCase() + t.slice(1))
       .filter((t) => t.length > 1)
@@ -2134,14 +2167,13 @@ export class VideoRenderer {
       return;
     }
 
-    const cardW = isVertical ? w * 0.88 : w * 0.62;
-    const cardX = (w - cardW) / 2;
+    const maxCardW = isVertical ? w * 0.88 : w * 0.62;
     const cardY = isVertical ? h * 0.18 : h * 0.2;
     const padX = Math.round(h * 0.03);
     const titleSize = Math.max(12, Math.round(h * 0.019));
     const fontSize = Math.max(13, Math.round(h * (isVertical ? 0.019 : 0.024)));
     const lineStep = fontSize * 1.4;
-    const textW = cardW - padX * 2 - fontSize * 1.2;
+    const textW = maxCardW - padX * 2 - fontSize * 1.2;
 
     // Partir cada viñeta en líneas según el ancho real
     ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
@@ -2164,6 +2196,14 @@ export class VideoRenderer {
     const totalLines = wrapped.reduce((n, l) => n + l.length, 0);
     const itemGap = fontSize * 0.55;
     const cardH = padX * 0.9 + titleSize * 1.9 + totalLines * lineStep + (wrapped.length - 1) * itemGap + padX * 0.6;
+    // Ancho según la línea más larga (antes fijo al 62 % de la pantalla)
+    const widestLine = Math.max(0, ...wrapped.flat().map((ln) => ctx.measureText(ln).width));
+    ctx.font = `800 ${titleSize}px "Plus Jakarta Sans", sans-serif`;
+    const titleNat = ctx.measureText(`📌 ${sectionTitle.toUpperCase()}`).width;
+    ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
+    const cardW = Math.min(maxCardW, Math.max(w * 0.28, widestLine + fontSize * 1.1, titleNat) + padX * 2);
+    const cardX = (w - cardW) / 2;
+    this.placeBox({ x: cardX, y: cardY, w: cardW, h: cardH }, layout, w, h);
 
     // Cristal oscuro semitransparente: deja intuir la ilustración alrededor
     ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';

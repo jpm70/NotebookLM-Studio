@@ -39,6 +39,16 @@ export interface SlideTerminalData {
   output?: string;
 }
 
+/**
+ * Colocación manual de la tarjeta, tabla o terminal de una diapositiva:
+ * centro relativo al lienzo (0-1) y escala sobre el tamaño automático.
+ */
+export interface SlideBoxLayout {
+  cx: number;
+  cy: number;
+  scale: number;
+}
+
 export interface DialogueTurn {
   speaker: 'Host_A' | 'Host_B';
   emotion: 'curioso' | 'entusiasta' | 'analítico' | 'sorprendido' | 'reflexivo' | 'divertido' | string;
@@ -52,6 +62,8 @@ export interface DialogueTurn {
   relevantText?: string;
   sectionTitle?: string;
   articlePointNumber?: number;
+  /** Posición y tamaño elegidos a mano; sin él, colocación automática. */
+  boxLayout?: SlideBoxLayout;
 }
 
 export interface PodcastScript {

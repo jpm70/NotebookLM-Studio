@@ -54,6 +54,7 @@ export function parseTechnicalArticleHtml(htmlContent: string): ParsedArticleRes
     const h1s = Array.from(doc.querySelectorAll('h1'));
 
     // Buscar títulos por estilo o posición
+    let categoryFound = false;
     for (const p of paragraphs) {
       const style = p.getAttribute('style') || '';
       const text = p.textContent?.trim() || '';
@@ -64,8 +65,14 @@ export function parseTechnicalArticleHtml(htmlContent: string): ParsedArticleRes
         title = text.replace(/:$/, '').trim();
       } else if (style.includes('font-size:18pt') || style.includes('font-size: 18pt') || style.includes('#3FA34D')) {
         subtitle = text;
-      } else if (text.includes('|') && (text.includes('unfantasmaenelsistema') || style.includes('font-size:10pt'))) {
+      } else if (
+        !categoryFound &&
+        text.includes('|') &&
+        (text.includes('unfantasmaenelsistema') || style.includes('font-size:10pt'))
+      ) {
+        // La categoría es la de la cabecera (la primera); el pie del artículo también lleva "| unfantasmaenelsistema"
         category = text;
+        categoryFound = true;
       }
     }
 
