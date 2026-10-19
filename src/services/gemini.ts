@@ -126,19 +126,47 @@ function isZeroQuota(errJson: any): boolean {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Cuota diaria (no tiene sentido esperar) frente a cuota por minuto (basta esperar unos segundos). */
+function isDailyQuota(errJson: any): boolean {
+  const details: any[] = errJson?.error?.details || [];
+  const ids = details.flatMap((d) => (d?.violations || []).map((v: any) => `${v?.quotaId || ''} ${v?.quotaMetric || ''}`));
+  return ids.some((id) => /per ?day/i.test(id)) || /per day|PerDay|daily/i.test(errJson?.error?.message || '');
+}
+
+/** Razonamiento corto para que respuestas largas (el guion) no tarden minutos; cada familia usa su parámetro. */
+function thinkingConfigFor(model: string): Record<string, unknown> | null {
+  if (/^gemini-[3-9]/.test(model)) return { thinkingLevel: 'low' };
+  if (/^gemini-2\.5/.test(model) && !/pro/.test(model)) return { thinkingBudget: 1024 };
+  return null;
+}
+
+export interface GenerateOptions {
+  apiKey?: string;
+  signal?: AbortSignal;
+  /** Mensajes de progreso para la interfaz (modelo en uso, esperas por cuota…). */
+  onStatus?: (message: string) => void;
+  /** Tiempo máximo por petición (ms). */
+  timeoutMs?: number;
+  /** Pide razonamiento corto cuando el modelo lo admite. */
+  fastThinking?: boolean;
+}
+
+const MAX_MODELS: Record<ModelKind, number> = { text: 4, tts: 4, image: 6 };
+
 /**
  * Llama a generateContent probando modelos candidatos hasta que uno responda.
- * - 404 / modelo no soportado → siguiente candidato.
- * - 429 por cuota agotada → espera el retryDelay que indica la API y reintenta (hasta 3 veces).
- * - 429 con cuota 0 (la clave no tiene acceso gratuito a ese modelo) → siguiente candidato.
+ * - 404 / modelo no soportado / tiempo agotado → siguiente candidato.
+ * - 429 por minuto → espera el retryDelay que indica la API (con cuenta atrás) y reintenta hasta 2 veces.
+ * - 429 diario o con cuota 0 → siguiente candidato sin esperar.
  */
 export async function generateContent(
   kind: ModelKind,
   body: Record<string, unknown>,
-  options: { apiKey?: string; signal?: AbortSignal } = {}
+  options: GenerateOptions = {}
 ): Promise<{ data: any; model: string }> {
+  const { onStatus, signal, timeoutMs = 180000, fastThinking = false } = options;
   const key = requireKey(options.apiKey);
-  const candidates = await candidatesFor(kind, key);
+  const candidates = (await candidatesFor(kind, key)).slice(0, MAX_MODELS[kind]);
   if (candidates.length === 0) {
     throw new GeminiError(
       kind === 'image'
@@ -151,19 +179,60 @@ export async function generateContent(
 
   let lastError: GeminiError | null = null;
   const zeroQuotaModels: string[] = [];
+  const dailyQuotaModels: string[] = [];
   const kindLabel = kind === 'image' ? 'imágenes' : kind === 'tts' ? 'voz' : 'texto';
+  const cancelled = () => signal?.aborted;
 
   for (const model of candidates) {
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const res = await fetch(`${API_BASE}/models/${model}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify(body),
-        signal: options.signal,
-      });
+    let useThinking = fastThinking ? thinkingConfigFor(model) : null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (cancelled()) throw new GeminiError('Generación cancelada.');
+      onStatus?.(attempt === 0 ? `Esperando la respuesta de ${model}…` : `Reintentando con ${model}…`);
+
+      let requestBody = body;
+      if (useThinking) {
+        const gc = (body.generationConfig as Record<string, unknown>) || {};
+        requestBody = { ...body, generationConfig: { ...gc, thinkingConfig: useThinking } };
+      }
+
+      // Tiempo límite por petición, combinado con la cancelación del usuario
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+      const onAbort = () => controller.abort('cancel');
+      signal?.addEventListener('abort', onAbort);
+      let res: Response;
+      try {
+        // La carrera con la señal garantiza que cancelar o agotar el tiempo corta la espera al instante
+        const aborted = new Promise<never>((_, reject) =>
+          controller.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+        );
+        res = await Promise.race([
+          fetch(`${API_BASE}/models/${model}:generateContent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal,
+          }),
+          aborted,
+        ]);
+      } catch (err: any) {
+        if (cancelled()) throw new GeminiError('Generación cancelada.');
+        if (controller.signal.aborted) {
+          lastError = new GeminiError(
+            `${model} no respondió en ${Math.round(timeoutMs / 1000)} s (Gemini puede estar saturado).`
+          );
+          break; // siguiente modelo
+        }
+        lastError = new GeminiError(`Error de red al llamar a ${model}: ${err?.message || err}`);
+        break;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+      }
 
       if (res.ok) {
         resolvedModels[kind] = model;
+        onStatus?.(`Respuesta recibida de ${model}.`);
         return { data: await res.json(), model };
       }
 
@@ -176,26 +245,41 @@ export async function generateContent(
       if (res.status === 403) {
         throw new GeminiError(`Google ha rechazado la clave: ${apiMsg}`, 403);
       }
+      // El modelo no admite el parámetro de razonamiento: repetir sin él
+      if (res.status === 400 && useThinking && /thinking/i.test(apiMsg)) {
+        useThinking = null;
+        attempt--;
+        continue;
+      }
 
       if (res.status === 429) {
         if (isZeroQuota(errJson)) {
           zeroQuotaModels.push(model);
-          break; // probar el siguiente modelo
+          onStatus?.(`${model} no tiene cuota gratuita; probando otro modelo…`);
+          break;
         }
-        if (attempt < 3) {
-          const wait = Math.min(parseRetryDelay(errJson) ?? 8000 * (attempt + 1), 65000);
-          await sleep(wait + 500);
+        if (isDailyQuota(errJson)) {
+          dailyQuotaModels.push(model);
+          onStatus?.(`Cuota diaria de ${model} agotada; probando otro modelo…`);
+          break;
+        }
+        if (attempt < 2) {
+          const wait = Math.min(parseRetryDelay(errJson) ?? 15000, 60000) + 500;
+          const end = Date.now() + wait;
+          while (Date.now() < end) {
+            if (cancelled()) throw new GeminiError('Generación cancelada.');
+            onStatus?.(`Límite por minuto de ${model}: reintento en ${Math.ceil((end - Date.now()) / 1000)} s…`);
+            await sleep(Math.min(1000, end - Date.now()));
+          }
           continue;
         }
-        lastError = new GeminiError(
-          `Cuota de Gemini agotada para ${model}. Espera un minuto y vuelve a intentarlo. (${apiMsg})`,
-          429
-        );
+        lastError = new GeminiError(`Cuota por minuto de ${model} agotada. Espera un minuto y vuelve a intentarlo.`, 429);
         break;
       }
 
       if (res.status >= 500 && attempt < 2) {
-        await sleep(2000 * (attempt + 1));
+        onStatus?.(`${model} está saturado (HTTP ${res.status}); reintentando…`);
+        await sleep(3000 * (attempt + 1));
         continue;
       }
 
@@ -206,6 +290,14 @@ export async function generateContent(
     }
   }
 
+  if (dailyQuotaModels.length > 0) {
+    throw new GeminiError(
+      `Has agotado la cuota diaria gratuita de Gemini (${kindLabel}) en: ${dailyQuotaModels.join(', ')}. ` +
+        'Se renueva cada día; vuelve a intentarlo mañana o usa otra clave.' +
+        (lastError ? ` Último error: ${lastError.message}` : ''),
+      429
+    );
+  }
   if (zeroQuotaModels.length > 0 && (!lastError || zeroQuotaModels.length >= candidates.length - 1)) {
     throw new GeminiError(
       `Tu clave no tiene cuota gratuita para ningún modelo de ${kindLabel} de Gemini (probados: ${zeroQuotaModels.join(', ')}). ` +
@@ -241,6 +333,9 @@ export function responseInlineData(data: any): { mimeType: string; data: string 
 
 export function parseJsonResponse<T = any>(data: any): T {
   const raw = responseText(data).trim();
+  if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+    throw new GeminiError('La respuesta de Gemini se cortó por longitud. Prueba con un artículo más corto o menos turnos.');
+  }
   if (!raw) {
     const reason = data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason;
     throw new GeminiError(`Gemini no devolvió contenido${reason ? ` (motivo: ${reason})` : ''}.`);

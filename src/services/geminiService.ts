@@ -1,5 +1,5 @@
 import { DialogueTurn, HostConfig, PodcastScript } from '../types';
-import { generateContent, parseJsonResponse, responseText } from './gemini';
+import { GenerateOptions, generateContent, parseJsonResponse, responseText } from './gemini';
 import {
   isHtmlArticle,
   parseTechnicalArticleHtml,
@@ -143,7 +143,8 @@ export async function generateScriptWithGemini(
   language: string,
   targetTurns: number = 10,
   userApiKey?: string,
-  visualStyle: string = 'anime'
+  visualStyle: string = 'anime',
+  options: Pick<GenerateOptions, 'onStatus' | 'signal'> = {}
 ): Promise<PodcastScript> {
   const { data } = await generateContent(
     'text',
@@ -162,12 +163,14 @@ export async function generateScriptWithGemini(
       ],
       generationConfig: {
         temperature: 0.7,
+        maxOutputTokens: 32768,
         responseMimeType: 'application/json',
         responseSchema: SCRIPT_SCHEMA,
       },
     },
-    { apiKey: userApiKey }
+    { apiKey: userApiKey, onStatus: options.onStatus, signal: options.signal, fastThinking: true }
   );
+  options.onStatus?.('Montando las diapositivas…');
 
   const script = parseJsonResponse<PodcastScript>(data);
   if (!Array.isArray(script.turns) || script.turns.length === 0) {

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { SourceInputSection } from './components/SourceInputSection';
@@ -170,6 +170,9 @@ export default function App() {
 
   const [script, setScript] = useState<PodcastScript | null>(DEFAULT_SAMPLE_SCRIPT);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState<string | null>(null);
+  const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
+  const generationAbortRef = useRef<AbortController | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Connection & API Key Modal State
@@ -200,10 +203,18 @@ export default function App() {
     }
   };
 
+  const handleCancelGeneration = () => {
+    generationAbortRef.current?.abort();
+  };
+
   const handleGenerateScript = async () => {
+    const controller = new AbortController();
+    generationAbortRef.current = controller;
     try {
       setIsGenerating(true);
       setErrorMessage(null);
+      setGenerationStatus('Preparando la petición a Gemini…');
+      setGenerationStartedAt(Date.now());
 
       const isArticle = isHtmlArticle(sourceText);
       const parsed = isArticle ? parseTechnicalArticleHtml(sourceText) : null;
@@ -216,7 +227,8 @@ export default function App() {
         settings.language,
         parsed && parsed.totalExpectedSlides > 0 ? parsed.totalExpectedSlides : settings.targetTurns,
         undefined,
-        settings.branding.visualStyle || 'anime'
+        settings.branding.visualStyle || 'anime',
+        { onStatus: setGenerationStatus, signal: controller.signal }
       );
 
       setScript(generated);
@@ -234,9 +246,14 @@ export default function App() {
       setStudioSubTab('script');
     } catch (err: any) {
       console.error('Error generando guion:', err);
-      setErrorMessage(err?.message || 'Error al conectar con Gemini. Verifica tu clave de API.');
+      if (!controller.signal.aborted) {
+        setErrorMessage(err?.message || 'Error al conectar con Gemini. Verifica tu clave de API.');
+      }
     } finally {
       setIsGenerating(false);
+      setGenerationStatus(null);
+      setGenerationStartedAt(null);
+      generationAbortRef.current = null;
     }
   };
 
@@ -380,6 +397,9 @@ export default function App() {
                   onDirectArticleBuild={handleDirectArticleBuild}
                   onSelectSampleTopic={handleSelectSampleTopic}
                   isGenerating={isGenerating}
+                  generationStatus={generationStatus}
+                  generationStartedAt={generationStartedAt}
+                  onCancelGeneration={handleCancelGeneration}
                 />
                 <HostConfigSection
                   hostA={hostA}

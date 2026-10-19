@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Upload, FileText, Sparkles, BookOpen, FileCheck, Loader2, Terminal } from 'lucide-react';
 import JSZip from 'jszip';
 import { analyzeImageWithGemini } from '../services/geminiService';
@@ -16,6 +16,9 @@ interface SourceInputSectionProps {
   onDirectArticleBuild?: () => void;
   onSelectSampleTopic?: (topic: SampleTopicItem) => void;
   isGenerating: boolean;
+  generationStatus?: string | null;
+  generationStartedAt?: number | null;
+  onCancelGeneration?: () => void;
 }
 
 export const SourceInputSection: React.FC<SourceInputSectionProps> = ({
@@ -25,7 +28,19 @@ export const SourceInputSection: React.FC<SourceInputSectionProps> = ({
   onDirectArticleBuild,
   onSelectSampleTopic,
   isGenerating,
+  generationStatus,
+  generationStartedAt,
+  onCancelGeneration,
 }) => {
+  // Segundos transcurridos mientras Gemini genera el guion
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (!isGenerating) return;
+    const id = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [isGenerating]);
+  const elapsed = generationStartedAt ? Math.floor((Date.now() - generationStartedAt) / 1000) : 0;
+
   const [uploadedFiles, setUploadedFiles] = useState<{ name: string; size: number; type: string }[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [isProcessingFile, setIsProcessingFile] = useState(false);
@@ -375,6 +390,19 @@ export const SourceInputSection: React.FC<SourceInputSectionProps> = ({
             className="w-full flex-1 min-h-[220px] bg-slate-900/60 border border-slate-800 rounded-2xl p-4 text-xs font-mono text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-amber-500 leading-relaxed resize-none shadow-inner"
           />
 
+          {isGenerating && generationStatus && (
+            <div className="p-2.5 rounded-xl bg-amber-950/30 border border-amber-800/50 text-amber-200 text-[11px] flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              <span className="flex-1">{generationStatus}</span>
+              <span className="text-amber-400/70 font-mono">{elapsed} s</span>
+            </div>
+          )}
+          {isGenerating && elapsed >= 60 && (
+            <p className="text-[10px] text-slate-500 leading-snug">
+              Un artículo largo puede tardar 1-2 minutos: Gemini escribe todos los turnos de golpe. Si pasa de 3 minutos sin
+              respuesta, la app prueba otro modelo.
+            </p>
+          )}
           <div className="flex items-center justify-between pt-1">
             <button
               type="button"
@@ -387,15 +415,26 @@ export const SourceInputSection: React.FC<SourceInputSectionProps> = ({
               Limpiar todo el contexto
             </button>
 
-            <button
-              type="button"
-              disabled={isGenerating || !sourceText.trim()}
-              onClick={onGenerate}
-              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
-            >
-              <Sparkles className="w-4 h-4 fill-slate-950" />
-              {isGenerating ? 'Generando Guion con Gemini...' : 'Generar Guion Estructurado'}
-            </button>
+            <div className="flex items-center gap-2">
+              {isGenerating && onCancelGeneration && (
+                <button
+                  type="button"
+                  onClick={onCancelGeneration}
+                  className="px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-rose-500/60 text-slate-300 hover:text-rose-300 font-semibold text-xs"
+                >
+                  Cancelar
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={isGenerating || !sourceText.trim()}
+                onClick={onGenerate}
+                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
+              >
+                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 fill-slate-950" />}
+                {isGenerating ? `Generando guion con Gemini… ${elapsed} s` : 'Generar Guion Estructurado'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
