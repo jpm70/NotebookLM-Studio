@@ -33,7 +33,8 @@ No hay servidor: todo se ejecuta en tu navegador con **tu propia clave de Gemini
    Si una imagen falla, esa diapositiva usa un fondo vectorial de reserva.
    Las tarjetas, tablas y terminales se ajustan solas a su contenido. Si en alguna diapositiva tapan la parte importante de la ilustración, pulsa **Colocar caja** en esa diapositiva de la Galería (o **Mover / redimensionar caja** bajo la vista previa de «Ajustes & Portada»): arrastra la caja, cambia su tamaño con el tirador de la esquina o usa **Izquierda / Centro / Derecha**. Se guarda por diapositiva y se usa al grabar; **Automático** vuelve a la colocación por defecto.
 5. **Compilar Episodio Completo** → sintetiza las voces con Gemini TTS y graba el vídeo (logo, portada, post-intro, subtítulos, música con auto-ducking y cierre) en `.mp4` (o `.webm` si tu navegador no graba MP4).
-6. **Kit SEO** → títulos, descripción con capítulos (con los tiempos reales del vídeo exportado) y etiquetas para YouTube.
+6. **Guardar proyecto / Abrir proyecto** (encima de las pestañas de pasos): descarga un `.nlmstudio.zip` con el texto del artículo, el guion (con la colocación de las cajas), los locutores, los ajustes, tus fondos y **las voces ya generadas**. Si se acaba la cuota diaria de voces a mitad de vídeo, guarda el proyecto; al día siguiente lo abres y la grabación solo pide las voces que faltan.
+7. **Kit SEO** → títulos, descripción con capítulos (con los tiempos reales del vídeo exportado) y etiquetas para YouTube.
 
 > **A tener en cuenta**
 > - La grabación es en **tiempo real**: un episodio de 8 minutos tarda unos 8 minutos. Mantén la pestaña visible mientras graba.
