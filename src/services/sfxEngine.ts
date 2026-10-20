@@ -7,6 +7,11 @@
 import { getSharedAudioContext } from './sharedAudio';
 import { SfxCategory, SoundEffectItem } from '../types';
 
+/** Nombres antiguos o alternativos que usan los selectores de entrada/cierre */
+const SFX_ALIASES: Record<string, string> = {
+  'bell-ding': 'ding-bell',
+};
+
 export const SFX_CATALOG: SoundEffectItem[] = [
   // --- TRANSICIONES ---
   {
@@ -305,7 +310,177 @@ class SfxSynthesizer {
         }
       };
 
-      switch (effectId) {
+      // Nodos de los efectos de entrada/cierre: se paran todos juntos
+      const track = (nodes: AudioScheduledSourceNode[], endAt: number) => {
+        nodes[0].onended = onEnded;
+        nodes.forEach((n) => n.stop(endAt));
+        this.activeNodes.push({
+          stop: () => {
+            nodes.forEach((n) => {
+              try {
+                n.stop();
+              } catch {}
+            });
+            onEnded();
+          },
+        });
+      };
+
+      switch (SFX_ALIASES[effectId] || effectId) {
+        // --- RISE CINEMATOGRÁFICO (crescendo de entrada) ---
+        case 'rise': {
+          const dur = 2.2;
+          const out = ctx.createGain();
+          out.gain.setValueAtTime(0.0001, now);
+          out.gain.exponentialRampToValueAtTime(safeVolume * 0.75, now + dur - 0.12);
+          out.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+          out.connect(this.getOutput());
+
+          // Ruido que se abre de grave a agudo
+          const noise = ctx.createBufferSource();
+          noise.buffer = this.createNoiseBuffer(dur);
+          const band = ctx.createBiquadFilter();
+          band.type = 'bandpass';
+          band.Q.setValueAtTime(1.2, now);
+          band.frequency.setValueAtTime(250, now);
+          band.frequency.exponentialRampToValueAtTime(5000, now + dur);
+          const noiseGain = ctx.createGain();
+          noiseGain.gain.setValueAtTime(1.0, now);
+          noise.connect(band);
+          band.connect(noiseGain);
+          noiseGain.connect(out);
+
+          // Dos sierras que suben una octava y media, ligeramente desafinadas
+          const oscs = [0, 7].map((detune) => {
+            const o = ctx.createOscillator();
+            o.type = 'sawtooth';
+            o.detune.setValueAtTime(detune, now);
+            o.frequency.setValueAtTime(110, now);
+            o.frequency.exponentialRampToValueAtTime(330, now + dur);
+            return o;
+          });
+          const lp = ctx.createBiquadFilter();
+          lp.type = 'lowpass';
+          lp.frequency.setValueAtTime(400, now);
+          lp.frequency.exponentialRampToValueAtTime(3500, now + dur);
+          const oscGain = ctx.createGain();
+          oscGain.gain.setValueAtTime(0.4, now);
+          oscs.forEach((o) => o.connect(lp));
+          lp.connect(oscGain);
+          oscGain.connect(out);
+
+          noise.start(now);
+          oscs.forEach((o) => o.start(now));
+          track([noise, ...oscs], now + dur);
+          break;
+        }
+
+        // --- BRUMA SCI-FI (ambiente sintético de entrada) ---
+        case 'ambient-scifi': {
+          const dur = loopDuration || 3.2;
+          const out = ctx.createGain();
+          out.gain.setValueAtTime(0.0001, now);
+          out.gain.linearRampToValueAtTime(safeVolume * 0.3, now + 0.9);
+          out.gain.setValueAtTime(safeVolume * 0.3, now + dur - 1.1);
+          out.gain.linearRampToValueAtTime(0.0001, now + dur);
+          out.connect(this.getOutput());
+
+          // Colchón de quintas con batido lento
+          const pads = [110, 110.6, 164.8, 220.4].map((f, i) => {
+            const o = ctx.createOscillator();
+            o.type = i % 2 ? 'sine' : 'triangle';
+            o.frequency.setValueAtTime(f, now);
+            return o;
+          });
+          const lp = ctx.createBiquadFilter();
+          lp.type = 'lowpass';
+          lp.Q.setValueAtTime(6, now);
+          lp.frequency.setValueAtTime(500, now);
+          const lfo = ctx.createOscillator();
+          lfo.frequency.setValueAtTime(0.6, now);
+          const lfoDepth = ctx.createGain();
+          lfoDepth.gain.setValueAtTime(350, now);
+          lfo.connect(lfoDepth);
+          lfoDepth.connect(lp.frequency);
+          const padGain = ctx.createGain();
+          padGain.gain.setValueAtTime(0.32, now);
+          pads.forEach((o) => o.connect(lp));
+          lp.connect(padGain);
+          padGain.connect(out);
+
+          // Destellos agudos tipo telemetría
+          const blip = ctx.createOscillator();
+          blip.type = 'sine';
+          [880, 1318.5, 1760, 1318.5, 2093].forEach((f, i) => blip.frequency.setValueAtTime(f, now + 0.5 + i * 0.45));
+          const blipGain = ctx.createGain();
+          blipGain.gain.setValueAtTime(0.0001, now);
+          for (let i = 0; i < 5; i++) {
+            const t = now + 0.5 + i * 0.45;
+            blipGain.gain.setValueAtTime(0.0001, t);
+            blipGain.gain.exponentialRampToValueAtTime(0.09, t + 0.01);
+            blipGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+          }
+          blip.connect(blipGain);
+          blipGain.connect(out);
+
+          pads.forEach((o) => o.start(now));
+          lfo.start(now);
+          blip.start(now);
+          track([...pads, lfo, blip], now + dur);
+          break;
+        }
+
+        // --- GONG ZEN (cierre reflexivo) ---
+        case 'gong-peaceful': {
+          const dur = 3.4; // cabe en un cierre de 3,5 s
+          const base = 98; // Sol grave
+          // Parciales inarmónicos típicos de gong, cada uno con su caída
+          const partials: [number, number, number][] = [
+            [1, 0.5, dur],
+            [1.52, 0.26, dur * 0.8],
+            [2.0, 0.2, dur * 0.65],
+            [2.74, 0.14, dur * 0.5],
+            [3.42, 0.1, dur * 0.4],
+            [4.9, 0.05, dur * 0.25],
+          ];
+          const out = ctx.createGain();
+          out.gain.setValueAtTime(safeVolume, now);
+          out.connect(this.getOutput());
+
+          const oscs = partials.map(([ratio, amp, decay], i) => {
+            const o = ctx.createOscillator();
+            o.type = 'sine';
+            // Ligera bajada de afinación al principio, como un gong real
+            o.frequency.setValueAtTime(base * ratio * 1.012, now);
+            o.frequency.exponentialRampToValueAtTime(base * ratio, now + 0.4);
+            const g = ctx.createGain();
+            g.gain.setValueAtTime(0.0001, now);
+            g.gain.exponentialRampToValueAtTime(amp, now + 0.015 + i * 0.01);
+            g.gain.exponentialRampToValueAtTime(0.0001, now + decay);
+            o.connect(g);
+            g.connect(out);
+            return o;
+          });
+
+          // Golpe de la maza
+          const mallet = ctx.createBufferSource();
+          mallet.buffer = this.createNoiseBuffer(0.12);
+          const malletLp = ctx.createBiquadFilter();
+          malletLp.type = 'lowpass';
+          malletLp.frequency.setValueAtTime(900, now);
+          const malletGain = ctx.createGain();
+          malletGain.gain.setValueAtTime(0.25, now);
+          malletGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
+          mallet.connect(malletLp);
+          malletLp.connect(malletGain);
+          malletGain.connect(out);
+
+          oscs.forEach((o) => o.start(now));
+          mallet.start(now);
+          track([...oscs, mallet], now + dur);
+          break;
+        }
+
         // --- SWOOSH ---
         case 'swoosh': {
           const dur = 0.65;
