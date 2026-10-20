@@ -16,6 +16,37 @@ import {
 import { HostConfig, PodcastScript, VideoBrandingSettings } from '../types';
 import { generateYoutubeSeo } from '../services/geminiService';
 
+/**
+ * Convierte una etiqueta en un hashtag que YouTube reconoce: con «#», sin espacios ni signos.
+ * "un fantasma en el sistema" -> "#UnFantasmaEnElSistema"
+ */
+export function toHashtag(tag: string): string {
+  const words = tag.replace(/#/g, ' ').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (!words.length) return '';
+  const body =
+    words.length === 1
+      ? words[0].charAt(0).toUpperCase() + words[0].slice(1)
+      : words
+          // Siglas (DFIR, KAPE) se respetan; el resto en formato «CadaPalabra»
+          .map((w) => (w.length > 1 && w === w.toUpperCase() ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()))
+          .join('');
+  return `#${body}`;
+}
+
+/** Hashtags únicos (sin repetir mayúsculas/minúsculas) */
+function uniqueHashtags(tags: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of tags) {
+    const h = toHashtag(t);
+    if (h && !seen.has(h.toLowerCase())) {
+      seen.add(h.toLowerCase());
+      out.push(h);
+    }
+  }
+  return out;
+}
+
 interface YouTubeMetadataModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -251,11 +282,38 @@ export const YouTubeMetadataModal: React.FC<YouTubeMetadataModalProps> = ({
     }
   };
 
-  const copyToClipboard = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
+  const copyToClipboard = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Navegadores que no dejan usar el portapapeles moderno
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
     setCopiedKey(key);
     setTimeout(() => setCopiedKey(null), 2000);
   };
+
+  const hashtags = uniqueHashtags(tags);
+  // Campo «Etiquetas» de YouTube Studio: separadas por comas, sin «#» y como máximo 500 caracteres
+  const tagsForStudio = (() => {
+    const clean = tags.map((t) => t.replace(/#/g, '').trim()).filter(Boolean);
+    const out: string[] = [];
+    let len = 0;
+    for (const t of clean) {
+      const add = (out.length ? 2 : 0) + t.length;
+      if (len + add > 500) break;
+      out.push(t);
+      len += add;
+    }
+    return out.join(', ');
+  })();
 
   const downloadThumbnail = () => {
     const canvas = canvasRef.current;
@@ -455,24 +513,41 @@ export const YouTubeMetadataModal: React.FC<YouTubeMetadataModalProps> = ({
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
                 <Tag className="w-4 h-4 text-purple-400" />
-                <span>Etiquetas SEO (Tags):</span>
+                <span>Hashtags y etiquetas:</span>
               </label>
-              <button
-                type="button"
-                onClick={() => copyToClipboard(tags.join(', '), 'tags')}
-                className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-semibold text-slate-300 flex items-center gap-1 hover:border-slate-700"
-              >
-                {copiedKey === 'tags' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                <span>Copiar Tags</span>
-              </button>
+              <div className="flex flex-wrap gap-1.5 justify-end">
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(hashtags.join(' '), 'hashtags')}
+                  className="px-2.5 py-1 rounded-lg bg-purple-950/60 border border-purple-800/60 text-[11px] font-semibold text-purple-200 flex items-center gap-1 hover:border-purple-600"
+                  title="Para pegar al final de la descripción del vídeo"
+                >
+                  {copiedKey === 'hashtags' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <span>Copiar hashtags (#)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(tagsForStudio, 'tags')}
+                  className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-semibold text-slate-300 flex items-center gap-1 hover:border-slate-700"
+                  title="Para el campo «Etiquetas» de YouTube Studio (Mostrar más → Etiquetas)"
+                >
+                  {copiedKey === 'tags' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <span>Copiar etiquetas</span>
+                </button>
+              </div>
             </div>
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              <strong className="text-slate-400">Hashtags:</strong> pégalos al final de la descripción (YouTube muestra los
+              3 primeros encima del título). <strong className="text-slate-400">Etiquetas:</strong> van sin «#» en YouTube
+              Studio → Mostrar más → Etiquetas.
+            </p>
             <div className="flex flex-wrap gap-1.5 p-3 rounded-xl bg-slate-950 border border-slate-800">
-              {tags.map((tag, i) => (
+              {hashtags.map((tag) => (
                 <span
-                  key={i}
+                  key={tag}
                   className="px-2 py-0.5 rounded-md bg-purple-950/60 border border-purple-800/50 text-[11px] text-purple-300 font-mono"
                 >
-                  #{tag}
+                  {tag}
                 </span>
               ))}
             </div>

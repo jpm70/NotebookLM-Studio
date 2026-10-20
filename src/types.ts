@@ -156,6 +156,8 @@ export interface VideoBrandingSettings {
   bgmVolume: number; // 0.05 to 0.5
   enableAutoDucking: boolean; // Baja volumen al hablar
   customBgmDataUrl?: string;
+  /** Nombre del archivo de música propia (solo para mostrarlo) */
+  customBgmName?: string;
 
   // Diapositivas / Fondos Ilustrados de Turno
   turnBackgroundImages?: Record<number, string>; // turnIndex -> image URL / base64

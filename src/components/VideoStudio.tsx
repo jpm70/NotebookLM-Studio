@@ -138,6 +138,8 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
 
   // Estados para BGM en vivo
   const [isPlayingBgmTest, setIsPlayingBgmTest] = useState(false);
+  const [bgmError, setBgmError] = useState<string | null>(null);
+  const bgmFileInputRef = useRef<HTMLInputElement>(null);
 
   // Estados para Generación de Fondos Ilustrados y Lote Anime
   const [isGeneratingTurnImages, setIsGeneratingTurnImages] = useState(false);
@@ -594,6 +596,26 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
   };
 
   // Probar música de fondo con Web Audio
+  const handleCustomBgmFile = (file: File) => {
+    setBgmError(null);
+    if (!file.type.startsWith('audio/') && !/\.(mp3|wav|ogg|m4a|aac|flac|webm)$/i.test(file.name)) {
+      setBgmError('Ese archivo no es de audio.');
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setBgmError('El archivo pesa más de 25 MB: usa uno más corto o en MP3.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      updateBranding({ customBgmDataUrl: dataUrl, customBgmName: file.name, bgmTrack: 'custom', enabledBgm: true });
+      if (isPlayingBgmTest) bgmService.start('custom', branding.bgmVolume, dataUrl);
+    };
+    reader.onerror = () => setBgmError('No se pudo leer el archivo.');
+    reader.readAsDataURL(file);
+  };
+
   const toggleBgmTest = () => {
     if (isPlayingBgmTest) {
       bgmService.stop();
@@ -1921,14 +1943,20 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                       { id: 'synthwave', label: '🕹️ Synthwave 80s' },
                       { id: 'acoustic', label: '🎸 Acústico' },
                       { id: 'ambient', label: '🌌 Ambiente Espacial' },
+                      { id: 'scifi', label: '🛸 Sci-Fi' },
+                      { id: 'custom', label: '🎵 Tu música' },
                     ].map((track) => (
                       <button
                         key={track.id}
                         type="button"
                         onClick={() => {
+                          if (track.id === 'custom' && !branding.customBgmDataUrl) {
+                            bgmFileInputRef.current?.click();
+                            return;
+                          }
                           updateBranding({ bgmTrack: track.id as BgmTrackType });
                           if (isPlayingBgmTest) {
-                            bgmService.start(track.id as BgmTrackType, branding.bgmVolume);
+                            bgmService.start(track.id as BgmTrackType, branding.bgmVolume, branding.customBgmDataUrl);
                           }
                         }}
                         className={`py-1.5 px-2 rounded-lg border text-left font-medium transition-all ${
@@ -1941,6 +1969,62 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Música propia */}
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                  <input
+                    ref={bgmFileInputRef}
+                    type="file"
+                    accept="audio/*,.mp3,.wav,.ogg,.m4a"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (file) handleCustomBgmFile(file);
+                    }}
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-300 truncate">
+                      {branding.customBgmDataUrl
+                        ? `🎵 ${branding.customBgmName || 'Música propia cargada'}`
+                        : 'Usa tu propia música (MP3, WAV, OGG…)'}
+                    </span>
+                    <div className="flex gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => bgmFileInputRef.current?.click()}
+                        className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-200 flex items-center gap-1"
+                      >
+                        <Upload className="w-3 h-3" />
+                        {branding.customBgmDataUrl ? 'Cambiar' : 'Subir'}
+                      </button>
+                      {branding.customBgmDataUrl && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isPlayingBgmTest) {
+                              bgmService.stop();
+                              setIsPlayingBgmTest(false);
+                            }
+                            updateBranding({
+                              customBgmDataUrl: undefined,
+                              customBgmName: undefined,
+                              bgmTrack: branding.bgmTrack === 'custom' ? 'lofi' : branding.bgmTrack,
+                            });
+                          }}
+                          className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-rose-900/60 text-[10px] font-semibold text-slate-300"
+                        >
+                          Quitar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {bgmError && <p className="text-[10px] text-rose-400">{bgmError}</p>}
+                  <p className="text-[10px] text-slate-500">
+                    Se repite en bucle durante todo el vídeo y se guarda dentro del proyecto. Usa música libre de derechos
+                    para que YouTube no bloquee el vídeo.
+                  </p>
                 </div>
 
                 {/* Volumen y Test */}
