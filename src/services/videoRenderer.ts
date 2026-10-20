@@ -1154,8 +1154,20 @@ export class VideoRenderer {
     // Botón / Call To Action dinámico
     const subBtnY = isVertical ? h * 0.83 : h * 0.85;
     const btnPulse = Math.sin(time * 4) * 4;
-    const btnW = 260 + btnPulse;
-    const btnH = 44;
+    // El botón se ajusta al texto (y el texto encoge si no cabe en el ancho del vídeo)
+    const ctaText = (branding.outroCallToAction || '▶ SUSCRÍBETE AL CANAL').toUpperCase();
+    const ctaPadX = Math.round(h * 0.04);
+    const ctaMaxW = w * 0.9;
+    let ctaFontPx = Math.round(h * 0.019);
+    ctx.font = `800 ${ctaFontPx}px "Plus Jakarta Sans", sans-serif`;
+    let ctaTextW = ctx.measureText(ctaText).width;
+    if (ctaTextW + ctaPadX * 2 > ctaMaxW) {
+      ctaFontPx = Math.max(10, Math.floor((ctaFontPx * (ctaMaxW - ctaPadX * 2)) / ctaTextW));
+      ctx.font = `800 ${ctaFontPx}px "Plus Jakarta Sans", sans-serif`;
+      ctaTextW = ctx.measureText(ctaText).width;
+    }
+    const btnW = Math.max(260, ctaTextW + ctaPadX * 2) + btnPulse;
+    const btnH = Math.max(44, Math.round(ctaFontPx * 2.6));
 
     ctx.fillStyle = '#ef4444';
     ctx.shadowColor = 'rgba(239, 68, 68, 0.5)';
@@ -1166,9 +1178,8 @@ export class VideoRenderer {
 
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#ffffff';
-    ctx.font = `800 ${Math.round(h * 0.019)}px "Plus Jakarta Sans", sans-serif`;
-    const ctaText = branding.outroCallToAction || '▶ SUSCRÍBETE AL CANAL';
-    ctx.fillText(ctaText.toUpperCase(), w / 2, subBtnY + 6);
+    ctx.font = `800 ${ctaFontPx}px "Plus Jakarta Sans", sans-serif`;
+    ctx.fillText(ctaText, w / 2, subBtnY + Math.round(ctaFontPx * 0.36));
 
     // Overlays en pantalla de Outro
     if (branding?.overlays && branding.overlays.length > 0) {
