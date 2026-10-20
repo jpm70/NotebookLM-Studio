@@ -28,18 +28,26 @@ import {
   buildScriptFromParsedArticle,
 } from './services/articleParser';
 import { SampleTopicItem } from './data/sampleTopicsData';
+import { getVoiceProfileById } from './services/voiceCatalog';
 import { browserTTS } from './services/ttsService';
+
+// Voces por defecto: Elvira Peninsular (Alice) y Álvaro Peninsular (Bob)
+const DEFAULT_VOICE_A = getVoiceProfileById('regional-elvira-es')!;
+const DEFAULT_VOICE_B = getVoiceProfileById('regional-alvaro-es')!;
 
 const INITIAL_HOST_A: HostConfig = {
   name: 'Alice',
   role: 'Explicadora técnica y analítica',
   tone: 'Estructurada, rigurosa y pedagógica',
   voiceGender: 'female',
-  neuralVoice: 'Kore', // Voz femenina de Gemini TTS
-  voiceRegister: 'Mezzosoprano Conversacional (Cálida)',
-  voiceAccent: 'Castellano (España)',
-  voicePitch: 1.0,
-  voiceSpeed: 1.0,
+  voiceProfileId: DEFAULT_VOICE_A.id,
+  voiceName: DEFAULT_VOICE_A.name,
+  neuralVoice: DEFAULT_VOICE_A.geminiVoiceId as HostConfig['neuralVoice'],
+  voiceRegister: DEFAULT_VOICE_A.vocalRegister,
+  voiceAccent: DEFAULT_VOICE_A.accent,
+  voicePitch: DEFAULT_VOICE_A.pitch,
+  voiceSpeed: DEFAULT_VOICE_A.speed,
+  systemVoiceURI: DEFAULT_VOICE_A.edgeVoiceId,
   color: '#3b82f6',
   avatarIcon: '🎙️',
   avatarPresetId: DEFAULT_HOST_A_AVATAR.id,
@@ -51,11 +59,14 @@ const INITIAL_HOST_B: HostConfig = {
   role: 'Curioso y cuestionador',
   tone: 'Espontáneo, incisivo y ameno',
   voiceGender: 'male',
-  neuralVoice: 'Puck', // Voz masculina de Gemini TTS
-  voiceRegister: 'Barítono Cálido (Medio-Grave)',
-  voiceAccent: 'Castellano (España)',
-  voicePitch: 1.0,
-  voiceSpeed: 1.0,
+  voiceProfileId: DEFAULT_VOICE_B.id,
+  voiceName: DEFAULT_VOICE_B.name,
+  neuralVoice: DEFAULT_VOICE_B.geminiVoiceId as HostConfig['neuralVoice'],
+  voiceRegister: DEFAULT_VOICE_B.vocalRegister,
+  voiceAccent: DEFAULT_VOICE_B.accent,
+  voicePitch: DEFAULT_VOICE_B.pitch,
+  voiceSpeed: DEFAULT_VOICE_B.speed,
+  systemVoiceURI: DEFAULT_VOICE_B.edgeVoiceId,
   color: '#f59e0b',
   avatarIcon: '🎧',
   avatarPresetId: DEFAULT_HOST_B_AVATAR.id,
