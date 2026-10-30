@@ -64,6 +64,7 @@ class AudioTTSService {
   private currentAudioElement: HTMLAudioElement | null = null;
   private isCancelled = false;
   private audioCache = new Map<string, string>(); // clave -> dataUrl audio/wav
+  private cacheListeners = new Set<() => void>();
   private keepAliveInterval: any = null;
 
   constructor() {
@@ -166,7 +167,16 @@ class AudioTTSService {
 
     const audioUrl = inlineAudioToDataUrl(inline.data, inline.mimeType);
     this.audioCache.set(cacheKey, audioUrl);
+    this.cacheListeners.forEach((fn) => fn());
     return audioUrl;
+  }
+
+  /** Avisa cada vez que entra una voz nueva en la caché (para el autoguardado). */
+  public onCacheChange(fn: () => void): () => void {
+    this.cacheListeners.add(fn);
+    return () => {
+      this.cacheListeners.delete(fn);
+    };
   }
 
   public stop() {

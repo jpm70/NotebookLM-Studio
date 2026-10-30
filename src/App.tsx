@@ -16,7 +16,8 @@ import { HostConfig, PodcastScript, StudioSettings, ConnectionStatus } from './t
 import { generateScriptWithGemini } from './services/geminiService';
 import { getStoredApiKey } from './services/apiKeyStorage';
 import { Sparkles, FileText, Radio, Film, AlertCircle, ExternalLink, Save, FolderOpen, Loader2 } from 'lucide-react';
-import { openProject, projectFileName, saveProject } from './services/projectFile';
+import { OpenedProject, openProject, projectFileName, saveProject } from './services/projectFile';
+import { AutosaveMeta, clearAutosave, isAutosavePaused, loadAutosave, storeAutosave } from './services/autosave';
 import { DEFAULT_LOGO_BASE64, DEFAULT_LOGO_PATH } from './assets/logoData';
 import {
   DEFAULT_HOST_A_AVATAR,
@@ -241,6 +242,28 @@ export default function App() {
     }
   };
 
+  /** Sustituye el estado por el de un proyecto abierto y devuelve el resumen para el aviso. */
+  const applyOpenedProject = (p: OpenedProject): string => {
+    setSourceText(p.sourceText);
+    setHostA({ ...INITIAL_HOST_A, ...p.hostA });
+    setHostB({ ...INITIAL_HOST_B, ...p.hostB });
+    setSettings({
+      ...INITIAL_SETTINGS,
+      ...p.settings,
+      branding: { ...INITIAL_SETTINGS.branding, ...(p.settings?.branding || {}) },
+    });
+    setScript(p.script);
+    setStudioSubTab(p.script ? 'video' : 'input');
+    // A partir de aquí el autoguardado sigue con el proyecto abierto
+    setPendingRestore(null);
+    setAutosaveReady(true);
+    const turns = p.script?.turns.length || 0;
+    return (
+      `${turns} turnos, ${p.backgroundCount} fondos y ${p.voiceCount} voces ya generadas` +
+      (turns && p.voiceCount < turns ? ` (al grabar solo se pedirán las ${turns - p.voiceCount} que faltan).` : '.')
+    );
+  };
+
   const handleOpenProject = async (file?: File | null) => {
     if (!file) return;
     if (!window.confirm('Abrir el proyecto sustituirá el trabajo actual (guion, ajustes y fondos). ¿Continuar?')) return;
@@ -249,26 +272,90 @@ export default function App() {
       setProjectNotice(null);
       setErrorMessage(null);
       const p = await openProject(file);
-      setSourceText(p.sourceText);
-      setHostA({ ...INITIAL_HOST_A, ...p.hostA });
-      setHostB({ ...INITIAL_HOST_B, ...p.hostB });
-      setSettings({
-        ...INITIAL_SETTINGS,
-        ...p.settings,
-        branding: { ...INITIAL_SETTINGS.branding, ...(p.settings?.branding || {}) },
-      });
-      setScript(p.script);
-      setStudioSubTab(p.script ? 'video' : 'input');
-      const turns = p.script?.turns.length || 0;
-      setProjectNotice(
-        `✓ Proyecto abierto: ${turns} turnos, ${p.backgroundCount} fondos y ${p.voiceCount} voces ya generadas` +
-          (turns && p.voiceCount < turns ? ` (al grabar solo se pedirán las ${turns - p.voiceCount} que faltan).` : '.')
-      );
+      setProjectNotice(`✓ Proyecto abierto: ${applyOpenedProject(p)}`);
     } catch (err: any) {
       setErrorMessage(err?.message || 'No se pudo abrir el proyecto.');
     } finally {
       setProjectBusy(null);
     }
+  };
+
+  // ---- Autoguardado en este navegador: recargar la página no obliga a volver a pagar voces y fondos
+  const [pendingRestore, setPendingRestore] = useState<{ blob: Blob; meta: AutosaveMeta } | null>(null);
+  const [autosaveReady, setAutosaveReady] = useState(false);
+  const [voiceCacheTick, setVoiceCacheTick] = useState(0);
+
+  useEffect(() => {
+    loadAutosave().then((rec) => {
+      if (rec) setPendingRestore(rec);
+      else setAutosaveReady(true);
+    });
+    return browserTTS.onCacheChange(() => setVoiceCacheTick((t) => t + 1));
+  }, []);
+
+  useEffect(() => {
+    // Hasta que el usuario decida qué hacer con la sesión anterior no se sobrescribe
+    if (!autosaveReady) return;
+    const backgrounds = Object.values(settings.branding.turnBackgroundImages || {}).filter(Boolean).length;
+    // El guion de ejemplo sin voces ni fondos no tiene nada que merezca guardarse
+    if (script === DEFAULT_SAMPLE_SCRIPT && browserTTS.getAudioCache().size === 0 && backgrounds === 0) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const run = async () => {
+      if (cancelled) return;
+      if (isAutosavePaused()) {
+        timer = setTimeout(run, 5000);
+        return;
+      }
+      try {
+        const { blob, voices } = await saveProject({ sourceText, hostA, hostB, settings, script });
+        if (cancelled) return; // ya hay un estado más reciente esperando
+        await storeAutosave(blob, {
+          savedAt: new Date().toISOString(),
+          title: settings.branding.introTitle || script?.episode_title || 'Proyecto',
+          turns: script?.turns.length || 0,
+          voices,
+          backgrounds,
+        });
+      } catch (err) {
+        console.warn('No se pudo autoguardar la sesión:', err);
+      }
+    };
+    timer = setTimeout(run, 4000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [autosaveReady, sourceText, hostA, hostB, settings, script, voiceCacheTick]);
+
+  const handleRestoreAutosave = async () => {
+    if (!pendingRestore) return;
+    try {
+      setProjectBusy('opening');
+      setProjectNotice(null);
+      setErrorMessage(null);
+      const p = await openProject(new File([pendingRestore.blob], 'autoguardado.nlmstudio.zip'));
+      setProjectNotice(`✓ Sesión recuperada: ${applyOpenedProject(p)}`);
+    } catch (err: any) {
+      setErrorMessage(`No se pudo recuperar la sesión: ${err?.message || err}`);
+      setPendingRestore(null);
+      setAutosaveReady(true);
+    } finally {
+      setProjectBusy(null);
+    }
+  };
+
+  const handleDiscardAutosave = async () => {
+    if (
+      !window.confirm(
+        'Se borrará la sesión guardada. Sus voces y fondos habría que volver a generarlos (y pagarlos). ¿Descartarla?'
+      )
+    )
+      return;
+    await clearAutosave();
+    setPendingRestore(null);
+    setAutosaveReady(true);
   };
 
   const handleCancelGeneration = () => {
@@ -406,6 +493,32 @@ export default function App() {
           <div className="space-y-6">
             {/* Guardar / Abrir proyecto */}
             <div className="flex flex-wrap items-center justify-end gap-2">
+              {pendingRestore && (
+                <div className="w-full rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200 flex flex-wrap items-center gap-2">
+                  <span className="mr-auto">
+                    Hay una sesión guardada automáticamente el{' '}
+                    {new Date(pendingRestore.meta.savedAt).toLocaleString('es-ES')}: «{pendingRestore.meta.title}»,{' '}
+                    {pendingRestore.meta.turns} turnos, {pendingRestore.meta.voices} voces y {pendingRestore.meta.backgrounds}{' '}
+                    fondos ya generados. Recupérala para no volver a pagarlos.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleRestoreAutosave}
+                    disabled={projectBusy !== null}
+                    className="px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold disabled:opacity-50"
+                  >
+                    Recuperar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDiscardAutosave}
+                    disabled={projectBusy !== null}
+                    className="px-3 py-1 rounded-lg border border-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-50"
+                  >
+                    Descartar
+                  </button>
+                </div>
+              )}
               {projectNotice && (
                 <span className="mr-auto text-[11px] text-emerald-300 flex items-center gap-2">
                   {projectNotice}
