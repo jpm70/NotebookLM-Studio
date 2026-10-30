@@ -68,6 +68,7 @@ import { YouTubeMetadataModal } from './YouTubeMetadataModal';
 import { ShortsClipModal } from './ShortsClipModal';
 import { VideoTimelineEditor } from './VideoTimelineEditor';
 import { browserTTS } from '../services/ttsService';
+import { setAutosavePaused } from '../services/autosave';
 import { generateValidatedPythonPackageZip } from '../services/pythonProjectFiles';
 import { SlideGalleryViewer } from './SlideGalleryViewer';
 
@@ -522,6 +523,26 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
   const handleBatchGenerateAnimeBackgrounds = async (mood: 'shinkai' | 'cyberpunk' | 'ghibli' = selectedAnimeMood) => {
     if (bgSource === 'manual') return;
     const total = script.turns.length;
+
+    // Las diapositivas que ya tienen imagen (generada o subida) no se vuelven a pedir salvo que se confirme:
+    // con Gemini cada imagen se cobra y con el generador gratuito cuesta 45 s
+    const existing = branding.turnBackgroundImages || {};
+    const hasImage = (i: number) => !!existing[i] && !existing[i].startsWith('data:image/svg');
+    const withImage = script.turns.filter((_, i) => hasImage(i)).length;
+    let skipExisting = false;
+    if (withImage > 0) {
+      const costNote = bgSource === 'gemini' ? ' Cada imagen de Gemini se cobra.' : '';
+      if (withImage === total) {
+        if (!window.confirm(`Las ${total} diapositivas ya tienen fondo. ¿Regenerarlas todas?${costNote}`)) return;
+      } else {
+        skipExisting = window.confirm(
+          `${withImage} de ${total} diapositivas ya tienen fondo.\n\n` +
+            `Aceptar: generar solo las ${total - withImage} que faltan.\n` +
+            `Cancelar: regenerarlas todas (${total}).${costNote}`
+        );
+      }
+    }
+
     batchCancelRef.current = false;
     const cancel = {
       get cancelled() {
@@ -537,10 +558,12 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     try {
       for (let i = 0; i < total; i++) {
         if (batchCancelRef.current) break;
+        if (skipExisting && hasImage(i)) continue;
         const turn = script.turns[i];
         setBatchAnimeProgressText(`Generando con ${sourceName} el fondo ${i + 1} de ${total}...`);
 
         if (geminiUnavailable) {
+          if (hasImage(i)) continue; // se conserva la imagen que ya había
           setTurnBackground(
             i,
             buildFallbackSvg(turn.visual_title, branding.visualStyle || 'anime', mood, i, settings.aspectRatio)
@@ -562,7 +585,8 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
             ),
         });
         if (batchCancelRef.current) break;
-        setTurnBackground(i, result.imageUrl);
+        // Si falla, no se sustituye una imagen ya pagada por el fondo vectorial de reserva
+        if (result.source !== 'svg-fallback' || !hasImage(i)) setTurnBackground(i, result.imageUrl);
         if (result.source !== 'svg-fallback') {
           generated++;
         } else {
@@ -625,6 +649,11 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
       setIsPlayingBgmTest(true);
     }
   };
+
+  // El autoguardado espera a que termine la grabación para no provocar saltos en el vídeo
+  useEffect(() => {
+    setAutosavePaused(isExporting);
+  }, [isExporting]);
 
   // Un renderizador por lienzo (conserva la caché de imágenes entre redibujados)
   useEffect(() => {

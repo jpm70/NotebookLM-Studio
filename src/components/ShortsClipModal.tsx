@@ -14,6 +14,7 @@ import {
 import { HostConfig, PodcastScript, VideoBrandingSettings } from '../types';
 import { VideoRenderer } from '../services/videoRenderer';
 import { browserTTS } from '../services/ttsService';
+import { setAutosavePaused } from '../services/autosave';
 
 interface ShortsClipModalProps {
   isOpen: boolean;
@@ -42,6 +43,10 @@ export const ShortsClipModal: React.FC<ShortsClipModalProps> = ({
   const rendererRef = useRef<VideoRenderer | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    setAutosavePaused(isRenderingClip);
+  }, [isRenderingClip]);
 
   // Seleccionar automáticamente el turno con mayor longitud o el más revelador
   useEffect(() => {

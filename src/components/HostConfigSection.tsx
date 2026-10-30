@@ -110,7 +110,7 @@ export const HostConfigSection: React.FC<HostConfigSectionProps> = ({
       voiceSpeed: customSpeed ?? voice.speed,
       systemVoiceURI: voice.edgeVoiceId,
     }));
-    browserTTS.clearCache();
+    // La caché de voces va por voz + texto: no hace falta vaciarla (volver a la voz anterior sale gratis)
   };
 
   const openAvatarModal = (hostTarget: 'Host_A' | 'Host_B') => {
@@ -471,7 +471,6 @@ export const HostConfigSection: React.FC<HostConfigSectionProps> = ({
                             voiceSpeed: prof.speed,
                             systemVoiceURI: prof.edgeVoiceId,
                           }));
-                          browserTTS.clearCache();
                         }}
                         className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500 truncate"
                       >
@@ -723,7 +722,6 @@ export const HostConfigSection: React.FC<HostConfigSectionProps> = ({
                             voiceSpeed: prof.speed,
                             systemVoiceURI: prof.edgeVoiceId,
                           }));
-                          browserTTS.clearCache();
                         }}
                         className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-amber-500 truncate"
                       >
