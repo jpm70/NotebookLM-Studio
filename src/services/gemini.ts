@@ -15,7 +15,7 @@ const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 export type ModelKind = 'text' | 'tts' | 'image';
 
 const PREFERRED_MODELS: Record<ModelKind, string[]> = {
-  text: ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-flash-latest', 'gemini-2.5-flash'],
+  text: ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'],
   tts: ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts', 'gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts'],
   image: ['gemini-2.5-flash-image', 'gemini-2.5-flash-image-preview'],
 };
@@ -151,7 +151,10 @@ export interface GenerateOptions {
   fastThinking?: boolean;
 }
 
-const MAX_MODELS: Record<ModelKind, number> = { text: 4, tts: 4, image: 6 };
+const MAX_MODELS: Record<ModelKind, number> = { text: 6, tts: 4, image: 6 };
+
+/** Esperas entre rondas completas cuando TODOS los modelos devuelven 5xx (saturación de Google, no de cuota). */
+const OVERLOAD_ROUND_WAITS_MS = [10000, 25000, 45000];
 
 /**
  * Llama a generateContent probando modelos candidatos hasta que uno responda.
@@ -183,6 +186,8 @@ export async function generateContent(
   const kindLabel = kind === 'image' ? 'imágenes' : kind === 'tts' ? 'voz' : 'texto';
   const cancelled = () => signal?.aborted;
 
+  for (let round = 0; ; round++) {
+  let sawOverload = false;
   for (const model of candidates) {
     let useThinking = fastThinking ? thinkingConfigFor(model) : null;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -285,6 +290,7 @@ export async function generateContent(
       }
       if (res.status >= 500) {
         onStatus?.(`${model} sigue saturado; probando otro modelo…`);
+        sawOverload = true;
         lastError = new GeminiError(`${model} está saturado ahora mismo (HTTP ${res.status}). Inténtalo en unos minutos.`, res.status);
         if (resolvedModels[kind] === model) delete resolvedModels[kind];
         break;
@@ -295,6 +301,17 @@ export async function generateContent(
       if (resolvedModels[kind] === model) delete resolvedModels[kind];
       break;
     }
+  }
+
+  // Todos los modelos saturados (503): suele durar segundos o pocos minutos. Se espera y se repite la ronda.
+  const roundWait = OVERLOAD_ROUND_WAITS_MS[round];
+  if (!sawOverload || roundWait === undefined || dailyQuotaModels.length > 0 || cancelled()) break;
+  const end = Date.now() + roundWait;
+  while (Date.now() < end) {
+    if (cancelled()) throw new GeminiError('Generación cancelada.');
+    onStatus?.(`Gemini está saturado (${kindLabel}); nueva ronda con todos los modelos en ${Math.ceil((end - Date.now()) / 1000)} s…`);
+    await sleep(Math.min(1000, end - Date.now()));
+  }
   }
 
   if (dailyQuotaModels.length > 0) {
