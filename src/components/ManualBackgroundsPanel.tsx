@@ -1,5 +1,7 @@
 import React, { useRef, useState } from 'react';
-import { Check, Copy, Download, Trash2, Upload, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { Check, Copy, Download, Trash2, Upload, ExternalLink, ChevronDown, ChevronUp, Images } from 'lucide-react';
+import { GhostArtPicker } from './GhostArtPicker';
+import { GhostArtItem, ghostArtToSlideImage } from '../services/ghostArtService';
 import { DialogueTurn } from '../types';
 import {
   AnimeMood,
@@ -63,6 +65,8 @@ export const ManualBackgroundsPanel: React.FC<ManualBackgroundsPanelProps> = ({
   const bulkInputRef = useRef<HTMLInputElement>(null);
   const singleInputRef = useRef<HTMLInputElement>(null);
   const singleTargetRef = useRef<number>(0);
+  // Selector de la galería GhostArt: 'all' = rellenar huecos libres; número = esa diapositiva.
+  const [picker, setPicker] = useState<number | 'all' | null>(null);
 
   const filled = turns.filter((_, i) => backgrounds[i]).length;
 
@@ -121,6 +125,30 @@ export const ManualBackgroundsPanel: React.FC<ManualBackgroundsPanelProps> = ({
     );
   };
 
+  const handleGhostArt = async (items: GhostArtItem[]) => {
+    const target = picker;
+    setPicker(null);
+    if (target === null || !items.length) return;
+    const slots =
+      target === 'all'
+        ? turns.map((_, i) => i).filter((i) => !backgrounds[i])
+        : [target];
+    let placed = 0;
+    const failed: string[] = [];
+    for (let k = 0; k < items.length && k < slots.length; k++) {
+      try {
+        onSetBackground(slots[k], await ghostArtToSlideImage(items[k], aspectRatio));
+        placed++;
+      } catch (e) {
+        failed.push(items[k].n);
+      }
+    }
+    setNotice(
+      `✓ ${placed} ${placed === 1 ? 'imagen colocada' : 'imágenes colocadas'} desde GhostArt.` +
+        (failed.length ? ` No se pudieron descargar: ${failed.join(', ')}.` : '')
+    );
+  };
+
   const openSingle = (i: number) => {
     singleTargetRef.current = i;
     singleInputRef.current?.click();
@@ -168,6 +196,16 @@ export const ManualBackgroundsPanel: React.FC<ManualBackgroundsPanelProps> = ({
         >
           <Download className="w-3.5 h-3.5 text-purple-400" />
           Descargar prompts (.txt)
+        </button>
+        <button
+          type="button"
+          onClick={() => setPicker('all')}
+          disabled={filled >= turns.length}
+          className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 hover:border-purple-500/50 disabled:opacity-40 text-xs font-semibold text-slate-200 flex items-center gap-1.5"
+          title="Elegir imágenes de la galería GhostArt para las diapositivas sin imagen"
+        >
+          <Images className="w-3.5 h-3.5 text-purple-400" />
+          Galería GhostArt
         </button>
         <button
           type="button"
@@ -278,6 +316,15 @@ export const ManualBackgroundsPanel: React.FC<ManualBackgroundsPanelProps> = ({
                 </button>
                 <button
                   type="button"
+                  onClick={() => setPicker(i)}
+                  className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:border-purple-500/50 text-[10px] font-semibold text-slate-200 flex items-center gap-1 shrink-0"
+                  title="Elegir la imagen de esta diapositiva en la galería GhostArt"
+                >
+                  <Images className="w-3 h-3" />
+                  Galería
+                </button>
+                <button
+                  type="button"
                   onClick={() => openSingle(i)}
                   className="px-2 py-1 rounded-lg bg-purple-600/80 hover:bg-purple-500 text-[10px] font-bold text-white flex items-center gap-1 shrink-0"
                   title="Subir la imagen de esta diapositiva"
@@ -313,6 +360,16 @@ export const ManualBackgroundsPanel: React.FC<ManualBackgroundsPanelProps> = ({
           );
         })}
       </ol>
+
+      {picker !== null && (
+        <GhostArtPicker
+          max={picker === 'all' ? turns.filter((_, i) => !backgrounds[i]).length : 1}
+          initialQuery={picker === 'all' ? '' : (turns[picker].sectionTitle || turns[picker].visual_title || '').toString()}
+          title={picker === 'all' ? 'Galería GhostArt · diapositivas sin imagen' : `Galería GhostArt · diapositiva ${picker + 1}`}
+          onCancel={() => setPicker(null)}
+          onPick={handleGhostArt}
+        />
+      )}
     </div>
   );
 };
