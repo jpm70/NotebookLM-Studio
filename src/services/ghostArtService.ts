@@ -47,12 +47,15 @@ export const sinTildes = (s: string) =>
   s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 /**
- * Descarga la imagen y la deja como fondo de diapositiva (JPEG del tamaño del vídeo).
- * Un GIF se usa como imagen fija (su primer fotograma): el renderizador pinta fondos estáticos.
+ * Descarga la imagen y la deja como fondo de diapositiva.
+ * - Imagen: JPEG del tamaño del vídeo.
+ * - GIF: se conserva tal cual (data URL image/gif); el renderizador decodifica sus fotogramas y lo anima en bucle.
  */
 export async function ghostArtToSlideImage(item: GhostArtItem, aspectRatio: '16:9' | '9:16'): Promise<string> {
   const r = await fetch(ghostArtUrl(item.p));
   if (!r.ok) throw new Error(`No se pudo descargar «${item.n}» (${r.status})`);
+  const blob = await r.blob();
+  if (item.k === 'gif') return blobToDataUrl(blob.type === 'image/gif' ? blob : new Blob([blob], { type: 'image/gif' }));
   const [w, h] = aspectRatio === '9:16' ? [720, 1280] : [1280, 720];
-  return toVideoJpeg(await blobToDataUrl(await r.blob()), w, h);
+  return toVideoJpeg(await blobToDataUrl(blob), w, h);
 }
