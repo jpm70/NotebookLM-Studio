@@ -36,7 +36,7 @@ No hay servidor: todo se ejecuta en tu navegador con **tu propia clave de Gemini
 6. **Guardar proyecto / Abrir proyecto** (encima de las pestañas de pasos): descarga un `.nlmstudio.zip` con el texto del artículo, el guion (con la colocación de las cajas), los locutores, los ajustes, tus fondos y **las voces ya generadas**. Si se acaba la cuota diaria de voces a mitad de vídeo, guarda el proyecto; al día siguiente lo abres y la grabación solo pide las voces que faltan.
 7. **Kit SEO** → títulos, descripción con capítulos (con los tiempos reales del vídeo exportado) y etiquetas para YouTube.
 
-**Galería GhostArt:** en *Fondos de las diapositivas → Manual*, el botón **Galería GhostArt** (general o por diapositiva) abre las ilustraciones y GIF de [GhostArt](https://unfantasmaenelsistema.github.io/GhostArt/) con buscador y filtros; lo que elijas se coloca como fondo. Lee su `manifest.json`, así que lo que se suba a GhostArt aparece sin tocar la app. Los GIF se usan como imagen fija.
+**Galería GhostArt:** en *Fondos de las diapositivas → Manual*, el botón **Galería GhostArt** (general o por diapositiva) abre las ilustraciones y GIF de [GhostArt](https://unfantasmaenelsistema.github.io/GhostArt/) con buscador y filtros; lo que elijas se coloca como fondo. Lee su `manifest.json`, así que lo que se suba a GhostArt aparece sin tocar la app. Los GIF se animan en bucle en el vídeo (Chrome o Edge; en otros navegadores quedan como imagen fija).
 
 > **A tener en cuenta**
 > - La grabación es en **tiempo real**: un episodio de 8 minutos tarda unos 8 minutos. Mantén la pestaña visible mientras graba.

@@ -131,7 +131,7 @@ export const GhostArtPicker: React.FC<GhostArtPickerProps> = ({ max, initialQuer
           )}
           {gif && (
             <p className="text-[10px] text-amber-300">
-              Los GIF se usan como imagen fija (su primer fotograma): el vídeo pinta fondos estáticos.
+              Los GIF se animan en bucle en el vídeo (Chrome o Edge); en otros navegadores se verán como imagen fija.
             </p>
           )}
         </div>
