@@ -76,7 +76,7 @@ export async function toVideoJpeg(src: string, width: number, height: number, cr
   return canvas.toDataURL('image/jpeg', 0.9);
 }
 
-const blobToDataUrl = (blob: Blob) =>
+export const blobToDataUrl = (blob: Blob) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
